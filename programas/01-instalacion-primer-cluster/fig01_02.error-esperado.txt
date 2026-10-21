@@ -1,0 +1,19 @@
+## Caso 1: binario de v1.37.0, suma de v1.37.1
+
+$ curl -fsSLO https://dl.k8s.io/release/v1.37.0/bin/linux/amd64/kubectl
+
+$ curl -fsSLO https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl.sha256
+
+$ echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check -
+sha256sum: WARNING: 1 computed checksum did NOT match
+kubectl: FAILED
+[código de salida: 1]
+
+## Caso 2: el binario correcto, con un byte de más
+
+$ curl -fsSLO https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl
+
+$ echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check -
+sha256sum: WARNING: 1 computed checksum did NOT match
+kubectl: FAILED
+[código de salida: 1]

@@ -1,0 +1,222 @@
+=== 1. Crear el clúster ===
+
+$ kind create cluster --name curso-k8s-l0 --config fig00_01.kind.yaml --kubeconfig /tmp/curso-k8s-l0.fszd/kubeconfig
+Creating cluster "curso-k8s-l0" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦   ...
+ ✓ Preparing nodes 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+Set kubectl context to "kind-curso-k8s-l0"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-curso-k8s-l0 --kubeconfig /tmp/curso-k8s-l0.fszd/kubeconfig
+
+Have a question, bug, or feature request? Let us know! https://kind.sigs.k8s.io/#community 🙂
+
+$ kubectl config current-context
+kind-curso-k8s-l0
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=180s
+node/curso-k8s-l0-control-plane condition met
+
+$ kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=180s
+pod/coredns-559f6c778d-gg7jc condition met
+pod/coredns-559f6c778d-wcmct condition met
+pod/etcd-curso-k8s-l0-control-plane condition met
+pod/kindnet-2cfgd condition met
+pod/kube-apiserver-curso-k8s-l0-control-plane condition met
+pod/kube-controller-manager-curso-k8s-l0-control-plane condition met
+pod/kube-proxy-cnp6z condition met
+pod/kube-scheduler-curso-k8s-l0-control-plane condition met
+
+=== 2. Los nodos son contenedores ===
+
+$ kubectl get nodes -o wide
+NAME                         STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                       KERNEL-VERSION              CONTAINER-RUNTIME
+curso-k8s-l0-control-plane   Ready    control-plane   25s   v1.37.0   172.18.0.5    <none>        Debian GNU/Linux 13 (trixie)   6.8.0-100-generic (arm64)   containerd://2.3.4
+
+$ docker ps --filter label=io.x-k8s.kind.cluster=curso-k8s-l0 --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
+NAMES                        IMAGE                  PORTS
+curso-k8s-l0-control-plane   kindest/node:v1.37.0   127.0.0.1:60004->6443/tcp
+
+=== 3. El plano de control, por dentro ===
+
+$ kubectl get pods -n kube-system
+NAME                                                 READY   STATUS    RESTARTS   AGE
+coredns-559f6c778d-gg7jc                             1/1     Running   0          15s
+coredns-559f6c778d-wcmct                             1/1     Running   0          15s
+etcd-curso-k8s-l0-control-plane                      1/1     Running   0          23s
+kindnet-2cfgd                                        1/1     Running   0          15s
+kube-apiserver-curso-k8s-l0-control-plane            1/1     Running   0          22s
+kube-controller-manager-curso-k8s-l0-control-plane   1/1     Running   0          22s
+kube-proxy-cnp6z                                     1/1     Running   0          15s
+kube-scheduler-curso-k8s-l0-control-plane            1/1     Running   0          22s
+
+$ docker exec curso-k8s-l0-control-plane ls /etc/kubernetes/manifests
+etcd.yaml
+kube-apiserver.yaml
+kube-controller-manager.yaml
+kube-scheduler.yaml
+
+$ docker exec curso-k8s-l0-control-plane sh -c "ps -eo comm | grep -E '^(kubelet|containerd|kube-|etcd)' | sort"
+containerd
+containerd-shim
+containerd-shim
+containerd-shim
+containerd-shim
+containerd-shim
+containerd-shim
+containerd-shim
+containerd-shim
+containerd-shim
+etcd
+kube-apiserver
+kube-controller
+kube-proxy
+kube-scheduler
+kubelet
+
+=== 4. Declarar un estado deseado ===
+
+$ kubectl apply -f fig00_02.deployment.yaml
+deployment.apps/espera created
+
+$ kubectl rollout status deployment/espera --timeout=90s
+Waiting for deployment "espera" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "espera" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "espera" rollout to finish: 2 of 3 updated replicas are available...
+deployment "espera" successfully rolled out
+
+$ kubectl get deployment espera
+NAME     READY   UP-TO-DATE   AVAILABLE   AGE
+espera   3/3     3            3           1s
+
+$ kubectl get replicaset -l app=espera
+NAME                DESIRED   CURRENT   READY   AGE
+espera-68b9d575f7   3         3         3       1s
+
+$ kubectl get pods -l app=espera
+NAME                      READY   STATUS    RESTARTS   AGE
+espera-68b9d575f7-9gbtr   1/1     Running   0          1s
+espera-68b9d575f7-cprg7   1/1     Running   0          1s
+espera-68b9d575f7-gsrlf   1/1     Running   0          1s
+
+=== 5. Borrar un Pod y ver qué hace el clúster ===
+
+$ kubectl delete pod espera-68b9d575f7-9gbtr
+pod "espera-68b9d575f7-9gbtr" deleted from default namespace
+
+$ kubectl get pods -l app=espera
+NAME                      READY   STATUS    RESTARTS   AGE
+espera-68b9d575f7-cprg7   1/1     Running   0          3s
+espera-68b9d575f7-fjx8v   1/1     Running   0          1s
+espera-68b9d575f7-gsrlf   1/1     Running   0          3s
+
+$ kubectl get events --field-selector involvedObject.kind=ReplicaSet --sort-by=.lastTimestamp
+LAST SEEN   TYPE     REASON             OBJECT                         MESSAGE
+3s          Normal   SuccessfulCreate   replicaset/espera-68b9d575f7   Created pod: espera-68b9d575f7-9gbtr
+3s          Normal   SuccessfulCreate   replicaset/espera-68b9d575f7   Created pod: espera-68b9d575f7-gsrlf
+3s          Normal   SuccessfulCreate   replicaset/espera-68b9d575f7   Created pod: espera-68b9d575f7-cprg7
+1s          Normal   SuccessfulCreate   replicaset/espera-68b9d575f7   Created pod: espera-68b9d575f7-fjx8v
+
+=== 6. Una orden contra una declaración ===
+
+$ kubectl scale deployment espera --replicas=5
+deployment.apps/espera scaled
+
+$ kubectl get deployment espera
+NAME     READY   UP-TO-DATE   AVAILABLE   AGE
+espera   3/5     5            3           3s
+
+$ kubectl diff -f fig00_02.deployment.yaml
+diff -u -N /tmp/curso-k8s-l0.fszd/LIVE-2048405624/apps.v1.Deployment.default.espera /tmp/curso-k8s-l0.fszd/MERGED-2371695965/apps.v1.Deployment.default.espera
+--- /tmp/curso-k8s-l0.fszd/LIVE-2048405624/apps.v1.Deployment.default.espera	2026-10-21 01:52:17
++++ /tmp/curso-k8s-l0.fszd/MERGED-2371695965/apps.v1.Deployment.default.espera	2026-10-21 01:52:17
+@@ -6,14 +6,14 @@
+     kubectl.kubernetes.io/last-applied-configuration: |
+       {"apiVersion":"apps/v1","kind":"Deployment","metadata":{"annotations":{},"name":"espera","namespace":"default"},"spec":{"replicas":3,"selector":{"matchLabels":{"app":"espera"}},"template":{"metadata":{"labels":{"app":"espera"}},"spec":{"containers":[{"image":"registry.k8s.io/pause:3.10","name":"espera","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true}}],"securityContext":{"runAsNonRoot":true,"runAsUser":65535,"seccompProfile":{"type":"RuntimeDefault"}}}}}}
+   creationTimestamp: "2026-10-21T07:52:14Z"
+-  generation: 2
++  generation: 3
+   name: espera
+   namespace: default
+   resourceVersion: "587"
+   uid: 0e26d2f6-3277-4f4f-9dc0-592b883974f8
+ spec:
+   progressDeadlineSeconds: 600
+-  replicas: 5
++  replicas: 3
+   revisionHistoryLimit: 10
+   selector:
+     matchLabels:
+
+$ kubectl apply -f fig00_02.deployment.yaml
+deployment.apps/espera configured
+
+$ kubectl rollout status deployment/espera --timeout=90s
+deployment "espera" successfully rolled out
+
+$ kubectl get deployment espera
+NAME     READY   UP-TO-DATE   AVAILABLE   AGE
+espera   3/3     3            3           4s
+
+=== 7. Qué defiende un clúster local y qué no ===
+
+$ kubectl auth whoami
+ATTRIBUTE                                           VALUE
+Username                                            kubernetes-admin
+Groups                                              [kubeadm:cluster-admins system:authenticated]
+Extra: authentication.kubernetes.io/credential-id   [X509SHA256=46112152e93e761f2cc271e1e7785ddeb11f2a70f486398efdd4d29fc16498c7]
+
+$ kubectl config view --minify
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: DATA+OMITTED
+    server: https://127.0.0.1:60004
+  name: kind-curso-k8s-l0
+contexts:
+- context:
+    cluster: kind-curso-k8s-l0
+    user: kind-curso-k8s-l0
+  name: kind-curso-k8s-l0
+current-context: kind-curso-k8s-l0
+kind: Config
+users:
+- name: kind-curso-k8s-l0
+  user:
+    client-certificate-data: DATA+OMITTED
+    client-key-data: DATA+OMITTED
+
+$ docker inspect curso-k8s-l0-control-plane --format 'privilegiado={{.HostConfig.Privileged}}  puerto_api={{json .NetworkSettings.Ports}}'
+privilegiado=true  puerto_api={"6443/tcp":[{"HostIp":"127.0.0.1","HostPort":"60004"}]}
+
+=== 8. Borrar todo ===
+
+$ kubectl delete -f fig00_02.deployment.yaml
+deployment.apps "espera" deleted from default namespace
+
+$ kind delete cluster --name curso-k8s-l0 --kubeconfig /tmp/curso-k8s-l0.fszd/kubeconfig
+Deleting cluster "curso-k8s-l0" ...
+Deleted nodes: ["curso-k8s-l0-control-plane"]
+
+=== 9. El error de la lección: kubectl sin clúster ===
+
+$ kubectl config current-context
+error: current-context is not set
+
+$ kubectl get nodes
+E1021 01:52:19.535319   95580 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:52:19.535953   95580 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:52:19.536970   95580 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:52:19.537419   95580 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:52:19.538619   95580 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+The connection to the server localhost:8080 was refused - did you specify the right host or port?

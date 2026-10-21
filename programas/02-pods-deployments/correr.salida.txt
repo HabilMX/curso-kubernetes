@@ -1,0 +1,332 @@
+# corrida: 2026-10-21 03:54 CST · clúster curso-k8s-l2 · kind v0.33.0 · kubectl v1.37.1
+
+## 2.1 El clúster, sin la imagen del revisor
+
+$ kind create cluster --name curso-k8s-l2 --config kind-curso.yaml
+(crear el clúster y esperar a que esté listo tardó 34 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l2
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l2-control-plane   Ready    control-plane   26s   v1.37.0
+curso-k8s-l2-worker          Ready    <none>          16s   v1.37.0
+curso-k8s-l2-worker2         Ready    <none>          16s   v1.37.0
+
+$ docker image ls curso-docker-revisor:1.6.0 --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+curso-docker-revisor:1.6.0 bd1b2e7d91b8 16.2MB
+
+$ docker exec curso-k8s-l2-worker crictl images | grep -c curso-docker-revisor
+0
+[código de salida: 1]
+
+## 2.3 El error a propósito: la imagen no está en el clúster
+
+$ kubectl apply -f revisor-deployment.yaml
+deployment.apps/revisor created
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS             RESTARTS   AGE
+revisor-697fb84f97-gn68x   0/1     ImagePullBackOff   0          20s
+revisor-697fb84f97-qvs7x   0/1     ImagePullBackOff   0          20s
+revisor-697fb84f97-vq4ld   0/1     ImagePullBackOff   0          20s
+
+$ kubectl get events --field-selector reason=Failed -o custom-columns=OBJETO:.involvedObject.name,MENSAJE:.message | head -4
+OBJETO                     MENSAJE
+revisor-697fb84f97-gn68x   Failed to pull image "curso-docker-revisor:1.6.0": failed to pull and unpack image "docker.io/library/curso-docker-revisor:1.6.0": failed to resolve reference "docker.io/library/curso-docker-revisor:1.6.0": pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed
+revisor-697fb84f97-gn68x   Error: ErrImagePull
+revisor-697fb84f97-gn68x   Error: ImagePullBackOff
+
+$ kubectl describe pod revisor-697fb84f97-gn68x | sed -n '/^Events:/,$p'
+Events:
+  Type     Reason     Age               From               Message
+  ----     ------     ----              ----               -------
+  Normal   Scheduled  20s               default-scheduler  Successfully assigned default/revisor-697fb84f97-gn68x to curso-k8s-l2-worker2
+  Normal   BackOff    19s               kubelet            spec.containers{revisor}: Back-off pulling image "curso-docker-revisor:1.6.0"
+  Warning  Failed     19s               kubelet            spec.containers{revisor}: Error: ImagePullBackOff
+  Normal   Pulling    6s (x2 over 20s)  kubelet            spec.containers{revisor}: Pulling image "curso-docker-revisor:1.6.0"
+  Warning  Failed     6s (x2 over 19s)  kubelet            spec.containers{revisor}: Failed to pull image "curso-docker-revisor:1.6.0": failed to pull and unpack image "docker.io/library/curso-docker-revisor:1.6.0": failed to resolve reference "docker.io/library/curso-docker-revisor:1.6.0": pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed
+  Warning  Failed     6s (x2 over 19s)  kubelet            spec.containers{revisor}: Error: ErrImagePull
+
+## 2.4 kind load docker-image y el clúster se recupera solo
+
+$ kind load docker-image curso-docker-revisor:1.6.0 --name curso-k8s-l2
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l2-worker", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l2-worker2", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l2-control-plane", loading...
+(cargar la imagen en los tres nodos tardó 2 s)
+
+$ docker exec curso-k8s-l2-worker crictl images | grep curso-docker-revisor
+docker.io/library/curso-docker-revisor          1.6.0                70e09194319be       3.68MB
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 2 of 3 updated replicas are available...
+deployment "revisor" successfully rolled out
+
+$ kubectl get deployment,replicaset -l app=revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/revisor   3/3     3            3           32s
+
+NAME                                 DESIRED   CURRENT   READY   AGE
+replicaset.apps/revisor-697fb84f97   3         3         3       32s
+
+$ kubectl get pods -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-697fb84f97-gn68x   1/1     Running   0          33s   10.244.1.3   curso-k8s-l2-worker2   <none>           <none>
+revisor-697fb84f97-qvs7x   1/1     Running   0          33s   10.244.1.2   curso-k8s-l2-worker2   <none>           <none>
+revisor-697fb84f97-vq4ld   1/1     Running   0          33s   10.244.2.2   curso-k8s-l2-worker    <none>           <none>
+
+$ kubectl logs deployment/revisor
+Found 3 pods, using pod/revisor-697fb84f97-gn68x
+revisor 1.6.0 escuchando en :8080 (1 servicio(s))
+
+## 2.5 La cadena de dueños: Deployment → ReplicaSet → Pod
+
+$ kubectl get pod revisor-697fb84f97-gn68x -o jsonpath='{.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}{"\n"}'
+ReplicaSet/revisor-697fb84f97
+
+$ kubectl get replicaset revisor-697fb84f97 -o jsonpath='{.metadata.ownerReferences[0].kind}/{.metadata.ownerReferences[0].name}{"\n"}'
+Deployment/revisor
+
+$ kubectl get deployment revisor -o jsonpath='{.metadata.ownerReferences}{"\n"}'
+
+
+## 2.6 Etiquetas y selectores
+
+$ kubectl get pods --show-labels
+NAME                       READY   STATUS    RESTARTS   AGE   LABELS
+revisor-697fb84f97-gn68x   1/1     Running   0          33s   app=revisor,pod-template-hash=697fb84f97
+revisor-697fb84f97-qvs7x   1/1     Running   0          33s   app=revisor,pod-template-hash=697fb84f97
+revisor-697fb84f97-vq4ld   1/1     Running   0          33s   app=revisor,pod-template-hash=697fb84f97
+
+$ kubectl get replicaset revisor-697fb84f97 -o jsonpath='{.spec.selector}{"\n"}'
+{"matchLabels":{"app":"revisor","pod-template-hash":"697fb84f97"}}
+
+$ kubectl get pods -l 'app in (revisor,prueba)' -o name
+pod/revisor-697fb84f97-gn68x
+pod/revisor-697fb84f97-qvs7x
+pod/revisor-697fb84f97-vq4ld
+
+$ kubectl get pods -l app=prueba
+No resources found in default namespace.
+
+## 2.7 Un Pod suelto no renace
+
+$ kubectl apply -f fig02_01.pod.yaml
+pod/revisor-suelto created
+
+$ kubectl get pod revisor-suelto -o jsonpath='{.metadata.name} dueños={.metadata.ownerReferences}{"\n"}'
+revisor-suelto dueños=
+
+$ kubectl delete pod revisor-suelto
+pod "revisor-suelto" deleted from default namespace
+
+$ kubectl get pods
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-697fb84f97-gn68x   1/1     Running   0          40s
+revisor-697fb84f97-qvs7x   1/1     Running   0          40s
+revisor-697fb84f97-vq4ld   1/1     Running   0          40s
+
+## 2.7 Un Pod del Deployment sí renace
+
+$ kubectl delete pod revisor-697fb84f97-gn68x
+pod "revisor-697fb84f97-gn68x" deleted from default namespace
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-697fb84f97-nrwht   1/1     Running   0          1s
+revisor-697fb84f97-qvs7x   1/1     Running   0          41s
+revisor-697fb84f97-vq4ld   1/1     Running   0          41s
+
+$ kubectl get events --field-selector involvedObject.kind=ReplicaSet,reason=SuccessfulCreate -o custom-columns=OBJETO:.involvedObject.name,MENSAJE:.message
+OBJETO               MENSAJE
+revisor-697fb84f97   Created pod: revisor-697fb84f97-vq4ld
+revisor-697fb84f97   Created pod: revisor-697fb84f97-gn68x
+revisor-697fb84f97   Created pod: revisor-697fb84f97-qvs7x
+revisor-697fb84f97   Created pod: revisor-697fb84f97-nrwht
+
+## Hábito de seguridad: lo que el contenedor no puede hacer
+
+$ kubectl get pod -l app=revisor -o jsonpath='{.items[0].spec.securityContext}{"\n"}{.items[0].spec.containers[0].securityContext}{"\n"}'
+{"runAsGroup":65532,"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}}
+{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]},"readOnlyRootFilesystem":true}
+
+$ kubectl exec deployment/revisor -- /revisor healthcheck
+sano
+
+$ kubectl exec deployment/revisor -- /revisor version
+1.6.0
+
+$ kubectl exec deployment/revisor -- sh -c 'id'
+error: Internal error occurred: Internal error occurred: error executing command in container: failed to exec in container: failed to start exec "d8ccff765090d70932ea2f15a41fa34693c57f56ad0106eeb012a0a816fa701d": OCI runtime exec failed: exec failed: unable to start container process: exec: "sh": executable file not found in $PATH
+[código de salida: 1]
+
+$ kubectl get pod -l app=revisor -o jsonpath='{.items[0].spec.containers[0].volumeMounts}{"\n"}'
+[{"mountPath":"/datos","name":"datos"},{"mountPath":"/var/run/secrets/kubernetes.io/serviceaccount","name":"kube-api-access-vxlgn","readOnly":true}]
+
+## Hábito de seguridad: runAsNonRoot contra runAsUser: 0
+
+$ kubectl apply -f fig02_02.raiz.yaml
+pod/revisor-raiz created
+
+$ kubectl get pod revisor-raiz
+NAME           READY   STATUS                       RESTARTS   AGE
+revisor-raiz   0/1     CreateContainerConfigError   0          10s
+
+$ kubectl get events --field-selector involvedObject.name=revisor-raiz,reason=Failed -o custom-columns=MENSAJE:.message | head -2
+MENSAJE
+Error: container's runAsUser breaks non-root policy (pod: "revisor-raiz_default(49586352-b84d-462b-9ded-e41bb2d2123a)", container: revisor)
+
+$ kubectl delete pod revisor-raiz
+pod "revisor-raiz" deleted from default namespace
+
+## 2.8 rollout: historia y reinicio
+
+$ kubectl rollout history deployment/revisor
+deployment.apps/revisor 
+REVISION  CHANGE-CAUSE
+1         <none>
+
+
+$ kubectl rollout restart deployment/revisor
+deployment.apps/revisor restarted
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get replicaset -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-55cc969586   3         3         3       2s
+revisor-697fb84f97   0         0         0       55s
+
+$ kubectl rollout history deployment/revisor
+deployment.apps/revisor 
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+
+
+$ kubectl get deployment revisor -o jsonpath='{.spec.template.metadata.annotations}{"\n"}'
+{"kubectl.kubernetes.io/restartedAt":"2026-10-21T03:55:53-06:00"}
+
+## Ejercicio 1: quitarle la etiqueta a un Pod
+
+$ kubectl label pod revisor-55cc969586-6m76h app=fuera --overwrite
+pod/revisor-55cc969586-6m76h labeled
+
+$ kubectl get pods -L app
+NAME                       READY   STATUS    RESTARTS   AGE   APP
+revisor-55cc969586-6m76h   1/1     Running   0          8s    fuera
+revisor-55cc969586-7tmfc   1/1     Running   0          7s    revisor
+revisor-55cc969586-f8dk6   1/1     Running   0          6s    revisor
+revisor-55cc969586-x6vfq   1/1     Running   0          5s    revisor
+
+$ kubectl get pod revisor-55cc969586-6m76h -o jsonpath='dueños={.metadata.ownerReferences}{"\n"}'
+dueños=
+
+$ kubectl delete pod revisor-55cc969586-6m76h
+pod "revisor-55cc969586-6m76h" deleted from default namespace
+
+## Ejercicio 2: un Pod suelto con la etiqueta del Deployment
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-55cc969586-7tmfc   1/1     Running   0          8s
+revisor-55cc969586-f8dk6   1/1     Running   0          7s
+revisor-55cc969586-x6vfq   1/1     Running   0          6s
+
+$ kubectl apply -f fig02_03.adoptado.yaml
+pod/revisor-extra created
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-55cc969586-7tmfc   1/1     Running   0          13s
+revisor-55cc969586-f8dk6   1/1     Running   0          12s
+revisor-55cc969586-x6vfq   1/1     Running   0          11s
+revisor-extra              1/1     Running   0          5s
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   3/3     3            3           67s
+
+$ kubectl get pod revisor-extra -o jsonpath='dueños={.metadata.ownerReferences}{"\n"}'
+dueños=
+
+$ kubectl get replicaset -l app=revisor -o custom-columns=NOMBRE:.metadata.name,DESEADOS:.spec.replicas,SELECTOR:.spec.selector.matchLabels
+NOMBRE               DESEADOS   SELECTOR
+revisor-55cc969586   3          map[app:revisor pod-template-hash:55cc969586]
+revisor-697fb84f97   0          map[app:revisor pod-template-hash:697fb84f97]
+
+$ kubectl delete pod revisor-extra
+pod "revisor-extra" deleted from default namespace
+
+## Ejercicio 3: una etiqueta de imagen que no existe
+
+$ kubectl apply -f fig02_04.etiqueta-mala.yaml
+deployment.apps/revisor configured
+
+$ kubectl rollout status deployment/revisor --timeout=40s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+error: timed out waiting for the condition
+[código de salida: 1]
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS         RESTARTS   AGE
+revisor-55cc969586-7tmfc   1/1     Running        0          55s
+revisor-55cc969586-f8dk6   1/1     Running        0          54s
+revisor-55cc969586-x6vfq   1/1     Running        0          53s
+revisor-b8b699487-fc4gn    0/1     ErrImagePull   0          41s
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   3/3     1            3           109s
+
+$ kubectl apply -f revisor-deployment.yaml
+deployment.apps/revisor configured
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+deployment "revisor" successfully rolled out
+
+$ kubectl get deployment,replicaset -l app=revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/revisor   3/3     3            3           109s
+
+NAME                                 DESIRED   CURRENT   READY   AGE
+replicaset.apps/revisor-55cc969586   3         3         3       56s
+replicaset.apps/revisor-697fb84f97   0         0         0       109s
+replicaset.apps/revisor-b8b699487    0         0         0       41s
+
+## Cómo sé que lo logré: el estado final
+
+$ kubectl diff -f revisor-deployment.yaml && echo 'sin diferencias con el archivo'
+sin diferencias con el archivo
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   3/3     3            3           109s
+
+$ kubectl exec deployment/revisor -- /revisor healthcheck
+sano
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l2
+Deleting cluster "curso-k8s-l2" ...
+Deleted nodes: ["curso-k8s-l2-worker" "curso-k8s-l2-worker2" "curso-k8s-l2-control-plane"]
+(borrar tardó 1 s)
+
+$ kind get clusters | grep -c curso-k8s-l2
+0

@@ -1,0 +1,25 @@
+# fig02_02.raiz.yaml — FALLA A PROPÓSITO: pide correr como root (runAsUser: 0)
+# y a la vez exige no ser root (runAsNonRoot: true). El kubelet se niega a
+# arrancar el contenedor. Es la red de seguridad de runAsNonRoot en acción.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: revisor-raiz
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 0
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: revisor
+    image: curso-docker-revisor:1.6.0
+    imagePullPolicy: IfNotPresent
+    env:
+    - name: REVISOR_SERVICIOS
+      value: "prueba http://prueba:9000/ 2s"
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]

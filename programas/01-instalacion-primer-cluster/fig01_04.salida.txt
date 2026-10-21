@@ -1,0 +1,48 @@
+# máquina virtual de Colima: Ubuntu 24.04.4 LTS, núcleo 6.8.0-100-generic
+## sin sudo
+
+$ sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+fs.inotify.max_user_instances = 512
+fs.inotify.max_user_watches = 1048576
+
+$ find /proc/[0-9]*/fd -lname anon_inode:inotify 2>/dev/null | wc -l
+3
+
+$ grep -rn '^fs.inotify' /etc/sysctl.conf /etc/sysctl.d/ /run/sysctl.d/ /usr/local/lib/sysctl.d/ /usr/lib/sysctl.d/
+(ninguna: lo que mide sysctl vale hasta el próximo reinicio)
+
+LISTO: instancias 512 (mínimo 512) y vigilancias 1048576 (mínimo 524288).
+
+## con sudo (solo mide)
+
+$ sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+fs.inotify.max_user_instances = 512
+fs.inotify.max_user_watches = 1048576
+
+$ find /proc/[0-9]*/fd -lname anon_inode:inotify 2>/dev/null | wc -l
+110
+
+$ grep -rn '^fs.inotify' /etc/sysctl.conf /etc/sysctl.d/ /run/sysctl.d/ /usr/local/lib/sysctl.d/ /usr/lib/sysctl.d/
+(ninguna: lo que mide sysctl vale hasta el próximo reinicio)
+
+LISTO: instancias 512 (mínimo 512) y vigilancias 1048576 (mínimo 524288).
+
+## el orden en que se aplican los archivos de /etc/sysctl.d/
+
+$ ls /etc/sysctl.d/
+10-bufferbloat.conf
+10-console-messages.conf
+10-ipv6-privacy.conf
+10-kernel-hardening.conf
+10-magic-sysrq.conf
+10-map-count.conf
+10-network-security.conf
+10-ptrace.conf
+10-zeropage.conf
+99-cloudimg-ipv6.conf
+99-lima.conf
+99-sysctl.conf
+README.sysctl
+
+$ ls -l /etc/sysctl.d/99-sysctl.conf
+lrwxrwxrwx 1 root root 14 Nov 25  2025 /etc/sysctl.d/99-sysctl.conf -> ../sysctl.conf

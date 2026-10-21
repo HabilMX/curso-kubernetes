@@ -1,0 +1,48 @@
+# revisor-deployment.yaml — Lección 2: el revisor con tres réplicas que renacen.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: revisor
+  template:
+    metadata:
+      labels:
+        app: revisor
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: revisor
+        image: curso-docker-revisor:1.6.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: REVISOR_SERVICIOS
+          value: "prueba http://prueba:9000/ 2s"
+        # La imagen de Docker trae REVISOR_REPORTE=/datos/reporte.json: con el
+        # sistema de archivos de solo lectura, /datos necesita un volumen. emptyDir
+        # vive y muere con el Pod (la Lección 8 lo contrasta con un PVC).
+        volumeMounts:
+        - name: datos
+          mountPath: /datos
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      volumes:
+      - name: datos
+        emptyDir:
+          sizeLimit: 10Mi

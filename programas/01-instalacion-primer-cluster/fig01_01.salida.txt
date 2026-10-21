@@ -1,0 +1,26 @@
+# kubectl v1.37.1 y kind v0.33.0 para linux/amd64
+
+$ curl -fsSLO https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl
+
+$ curl -fsSLO https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl.sha256
+
+$ cat kubectl.sha256
+65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8
+
+$ echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check -
+kubectl: OK
+
+$ curl -fsSLo kind-linux-amd64 https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64
+
+$ curl -fsSLo kind-linux-amd64.sha256sum https://github.com/kubernetes-sigs/kind/releases/download/v0.33.0/kind-linux-amd64.sha256sum
+
+$ cat kind-linux-amd64.sha256sum
+aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  kind-linux-amd64
+
+$ sha256sum --check kind-linux-amd64.sha256sum
+kind-linux-amd64: OK
+
+$ wc -c kubectl kind-linux-amd64
+ 61886626 kubectl
+ 10530942 kind-linux-amd64
+ 72417568 total

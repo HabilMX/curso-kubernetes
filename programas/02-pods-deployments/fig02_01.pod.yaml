@@ -1,0 +1,37 @@
+# fig02_01.pod.yaml — un Pod suelto: el revisor sin Deployment que lo cuide.
+# Sirve para ver qué hace un Pod por sí solo, y qué NO hace: si lo borras, nadie
+# lo repone. No lleva etiqueta app: revisor a propósito, para que ningún
+# ReplicaSet lo confunda con uno de los suyos.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: revisor-suelto
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: revisor
+    image: curso-docker-revisor:1.6.0
+    imagePullPolicy: IfNotPresent
+    ports:
+    - name: http
+      containerPort: 8080
+    env:
+    - name: REVISOR_SERVICIOS
+      value: "prueba http://prueba:9000/ 2s"
+    volumeMounts:
+    - name: datos
+      mountPath: /datos
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+  volumes:
+  - name: datos
+    emptyDir:
+      sizeLimit: 10Mi

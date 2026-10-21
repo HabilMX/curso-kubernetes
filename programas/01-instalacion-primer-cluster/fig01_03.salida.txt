@@ -1,0 +1,25 @@
+# Ubuntu 24.04.5 LTS, x86_64, sha256sum (GNU coreutils) 9.4
+
+$ echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+kubectl: OK
+
+$ sha256sum --check kind-linux-amd64.sha256sum
+kind-linux-amd64: OK
+
+$ install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+$ install -o root -g root -m 0755 kind-linux-amd64 /usr/local/bin/kind
+
+$ ls -l /usr/local/bin/kubectl /usr/local/bin/kind
+-rwxr-xr-x 1 root root 10530942 Oct 21 09:53 /usr/local/bin/kind
+-rwxr-xr-x 1 root root 61886626 Oct 21 09:53 /usr/local/bin/kubectl
+
+$ command -v kubectl kind
+/usr/local/bin/kubectl
+/usr/local/bin/kind
+
+$ kubectl version --client
+Client Version: v1.37.1
+Kustomize Version: v5.8.1
+
+$ kind version
+kind v0.33.0 go1.26.7 linux/amd64

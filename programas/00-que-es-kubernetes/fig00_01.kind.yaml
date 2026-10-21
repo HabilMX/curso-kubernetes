@@ -1,0 +1,9 @@
+# fig00_01.kind.yaml — el clúster de prueba de la Lección 0.
+# Un solo nodo, que hace a la vez de plano de control y de nodo de trabajo.
+# La imagen del nodo va fijada por su huella (sha256), copiada de las notas de la
+# versión v0.33.0 de kind. El clúster del curso (tres nodos) llega en la Lección 1.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

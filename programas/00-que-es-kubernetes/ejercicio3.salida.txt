@@ -1,0 +1,68 @@
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=180s
+node/curso-k8s-l0-control-plane condition met
+
+$ kubectl apply -f fig00_02.deployment.yaml
+deployment.apps/espera created
+
+$ kubectl rollout status deployment/espera --timeout=90s
+Waiting for deployment "espera" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "espera" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "espera" rollout to finish: 2 of 3 updated replicas are available...
+deployment "espera" successfully rolled out
+
+=== Caso 1. Borrar los tres Pods ===
+
+$ kubectl delete pods -l app=espera
+pod "espera-68b9d575f7-khb2n" deleted from default namespace
+pod "espera-68b9d575f7-phxml" deleted from default namespace
+pod "espera-68b9d575f7-srfng" deleted from default namespace
+
+$ kubectl get pods -l app=espera
+NAME                      READY   STATUS    RESTARTS   AGE
+espera-68b9d575f7-kcvgl   1/1     Running   0          13s
+espera-68b9d575f7-qbnbx   1/1     Running   0          14s
+espera-68b9d575f7-qz6pc   1/1     Running   0          14s
+
+=== Caso 2. Una orden a 1 y luego el archivo ===
+
+$ kubectl scale deployment espera --replicas=1
+deployment.apps/espera scaled
+
+$ kubectl diff -f fig00_02.deployment.yaml | grep -E "^[-+] +replicas"
+-  replicas: 1
++  replicas: 3
+
+$ kubectl apply -f fig00_02.deployment.yaml
+deployment.apps/espera configured
+
+$ kubectl rollout status deployment/espera --timeout=90s
+Waiting for deployment "espera" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "espera" rollout to finish: 2 of 3 updated replicas are available...
+deployment "espera" successfully rolled out
+
+$ kubectl get deployment espera
+NAME     READY   UP-TO-DATE   AVAILABLE   AGE
+espera   3/3     3            3           17s
+
+=== Caso 3. Borrar el Deployment ===
+
+$ kubectl delete deployment espera
+deployment.apps "espera" deleted from default namespace
+
+$ kubectl get replicaset,pods -l app=espera
+No resources found in default namespace.
+
+=== Caso 4. kubectl sin clúster ===
+
+$ kind delete cluster --name curso-k8s-l0 --kubeconfig /tmp/curso-k8s-l0.dNY9/kubeconfig
+Deleting cluster "curso-k8s-l0" ...
+Deleted nodes: ["curso-k8s-l0-control-plane"]
+
+$ kubectl get pods
+E1021 01:53:16.725925    1928 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:53:16.726506    1928 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:53:16.727620    1928 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:53:16.728104    1928 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+E1021 01:53:16.729326    1928 memcache.go:381] "Couldn't get current server API group list" err="Get \"http://localhost:8080/api?timeout=32s\": dial tcp [::1]:8080: connect: connection refused"
+The connection to the server localhost:8080 was refused - did you specify the right host or port?

@@ -1,0 +1,58 @@
+
+$ kind create cluster --name curso-k8s-l0 --config /tmp/curso-k8s-l0.zBHb/tres-nodos.kind.yaml --kubeconfig /tmp/curso-k8s-l0.zBHb/kubeconfig
+Creating cluster "curso-k8s-l0" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-curso-k8s-l0"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-curso-k8s-l0 --kubeconfig /tmp/curso-k8s-l0.zBHb/kubeconfig
+
+Have a nice day! 👋
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=180s
+node/curso-k8s-l0-control-plane condition met
+node/curso-k8s-l0-worker condition met
+node/curso-k8s-l0-worker2 condition met
+
+$ kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=180s
+pod/coredns-559f6c778d-hhpfk condition met
+pod/coredns-559f6c778d-xqxx9 condition met
+pod/etcd-curso-k8s-l0-control-plane condition met
+pod/kindnet-ddrvt condition met
+pod/kindnet-rkbwq condition met
+pod/kindnet-wcwkh condition met
+pod/kube-apiserver-curso-k8s-l0-control-plane condition met
+pod/kube-controller-manager-curso-k8s-l0-control-plane condition met
+pod/kube-proxy-59kwg condition met
+pod/kube-proxy-6dhvf condition met
+pod/kube-proxy-bm8br condition met
+pod/kube-scheduler-curso-k8s-l0-control-plane condition met
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l0-control-plane   Ready    control-plane   30s   v1.37.0
+curso-k8s-l0-worker          Ready    <none>          19s   v1.37.0
+curso-k8s-l0-worker2         Ready    <none>          19s   v1.37.0
+
+$ kubectl get pods -n kube-system -l k8s-app=kube-proxy -o wide
+NAME               READY   STATUS    RESTARTS   AGE   IP           NODE                         NOMINATED NODE   READINESS GATES
+kube-proxy-59kwg   1/1     Running   0          19s   172.18.0.7   curso-k8s-l0-worker          <none>           <none>
+kube-proxy-6dhvf   1/1     Running   0          20s   172.18.0.6   curso-k8s-l0-control-plane   <none>           <none>
+kube-proxy-bm8br   1/1     Running   0          19s   172.18.0.5   curso-k8s-l0-worker2         <none>           <none>
+
+$ kind delete cluster --name curso-k8s-l0 --kubeconfig /tmp/curso-k8s-l0.zBHb/kubeconfig
+Deleting cluster "curso-k8s-l0" ...
+Deleted nodes: ["curso-k8s-l0-control-plane" "curso-k8s-l0-worker2" "curso-k8s-l0-worker"]

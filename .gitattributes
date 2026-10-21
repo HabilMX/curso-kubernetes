@@ -1,0 +1,20 @@
+# Archivos de trabajo del curso: no viajan al repositorio publico
+es/_*.md export-ignore
+
+# La lista de patrones se queda en GitLab: deletrea nombres internos y el
+# revisor no puede revisarse a si mismo (se excluye para no cazarse siempre).
+.publicable-interno.txt export-ignore
+
+# GitHub mide el lenguaje del repositorio con Linguist, y los guiones que verifican
+# el curso pesan mas que el material: por eso un curso de Go aparecia como de Shell.
+# Estos no son el lenguaje que se ensena, asi que no cuentan para esa medida.
+herramientas/*.sh linguist-detectable=false
+verificar-publicable.sh linguist-detectable=false
+
+# El guion de esa revision tampoco viaja: alla no puede correr -su lista interna no
+# se publica- y ademas describe como funciona la puerta: que busca, que exceptua y
+# donde falla cerrado. Vive en el repositorio de trabajo, que es donde se usa.
+verificar-publicable.sh export-ignore
+
+# El contrato técnico y sus estados corridos son material de trabajo de quienes escriben el curso: no viajan al repositorio público.
+programas/_contrato/** export-ignore

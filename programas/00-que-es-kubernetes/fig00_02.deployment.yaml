@@ -1,0 +1,31 @@
+# fig00_02.deployment.yaml — un estado deseado: «quiero tres copias de este contenedor».
+# La imagen es `pause`, un contenedor que no hace nada más que esperar; viene ya
+# dentro del nodo de kind, así que no se descarga nada. El `revisor` llega en la
+# Lección 2; aquí solo importa ver qué hace el clúster con lo que declaras.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: espera
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: espera
+  template:
+    metadata:
+      labels:
+        app: espera
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65535
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: espera
+        image: registry.k8s.io/pause:3.10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]

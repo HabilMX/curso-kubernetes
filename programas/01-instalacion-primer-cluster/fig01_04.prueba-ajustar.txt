@@ -1,0 +1,31 @@
+# prueba de --ajustar en un contenedor SIN privilegios (kindest/node como Debian desechable):
+# su /proc/sys es de solo lectura, así que sysctl --load NO puede cambiar el núcleo.
+
+$ ./fig01_04.sh --ajustar
+Tus vigilancias ya son 1048576, más que 524288: no se tocan.
+
+$ sysctl --load=/etc/sysctl.d/99-kind-inotify.conf
+sysctl: permission denied on key "fs.inotify.max_user_instances"
+[código de salida: 1]
+
+$ cat /etc/sysctl.d/99-kind-inotify.conf
+# /etc/sysctl.d/99-kind-inotify.conf — límites de inotify que pide la guía de
+# kind («Known Issues», https://kind.sigs.k8s.io/docs/user/known-issues/).
+# Con los de Ubuntu y Linux Mint (128 instancias), un clúster de tres nodos no
+# arranca: el kubelet de los nodos de trabajo cae con «too many open files».
+fs.inotify.max_user_instances = 512
+
+$ echo otro > /etc/sysctl.d/99-kind-inotify.conf
+
+$ ./fig01_04.sh --ajustar
+Tus vigilancias ya son 1048576, más que 524288: no se tocan.
+ALTO: ya existe /etc/sysctl.d/99-kind-inotify.conf con otro contenido. No lo piso:
+1c1,5
+< otro
+---
+> # /etc/sysctl.d/99-kind-inotify.conf — límites de inotify que pide la guía de
+> # kind («Known Issues», https://kind.sigs.k8s.io/docs/user/known-issues/).
+> # Con los de Ubuntu y Linux Mint (128 instancias), un clúster de tres nodos no
+> # arranca: el kubelet de los nodos de trabajo cae con «too many open files».
+> fs.inotify.max_user_instances = 512
+[código de salida: 1]

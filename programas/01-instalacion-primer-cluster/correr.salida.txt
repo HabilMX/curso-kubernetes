@@ -1,0 +1,314 @@
+# corrida: 2026-10-21 07:10 CST · kubeconfig temporal propio
+
+=== 1. Las herramientas ===
+
+$ kind version
+kind v0.33.0 go1.27.0 darwin/arm64
+
+$ kubectl version --client
+Client Version: v1.37.1
+Kustomize Version: v5.8.1
+
+=== 2. Antes del clúster: el kubeconfig está vacío ===
+
+$ kubectl config get-contexts
+CURRENT   NAME   CLUSTER   AUTHINFO   NAMESPACE
+
+$ kubectl config current-context
+error: current-context is not set
+[código de salida: 1]
+
+=== 3. Crear el clúster ===
+
+$ cat kind-curso.yaml
+# kind-curso.yaml — el clúster del curso: un nodo de control y dos de trabajo,
+# con la imagen del nodo fijada por su huella (notas de la versión v0.33.0 de kind).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+- role: worker
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+- role: worker
+  image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+
+$ kind create cluster --name curso-k8s-l1 --config kind-curso.yaml
+Creating cluster "curso-k8s-l1" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-curso-k8s-l1"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-curso-k8s-l1
+
+Have a nice day! 👋
+(crear tardó 23 s)
+
+=== 4. Contextos y kubeconfig ===
+
+$ kubectl config current-context
+kind-curso-k8s-l1
+
+$ kubectl config get-contexts
+CURRENT   NAME                CLUSTER             AUTHINFO            NAMESPACE
+*         kind-curso-k8s-l1   kind-curso-k8s-l1   kind-curso-k8s-l1   
+
+$ kubectl config view --minify
+apiVersion: v1
+clusters:
+- cluster:
+    certificate-authority-data: DATA+OMITTED
+    server: https://127.0.0.1:54589
+  name: kind-curso-k8s-l1
+contexts:
+- context:
+    cluster: kind-curso-k8s-l1
+    user: kind-curso-k8s-l1
+  name: kind-curso-k8s-l1
+current-context: kind-curso-k8s-l1
+kind: Config
+users:
+- name: kind-curso-k8s-l1
+  user:
+    client-certificate-data: DATA+OMITTED
+    client-key-data: DATA+OMITTED
+
+$ stat -c %A "$KUBECONFIG"
+-rw-------
+
+=== 5. Mirar el clúster ===
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=240s
+node/curso-k8s-l1-control-plane condition met
+node/curso-k8s-l1-worker condition met
+node/curso-k8s-l1-worker2 condition met
+
+$ kubectl get nodes --no-headers | wc -l
+3
+
+$ kubectl get nodes -o wide
+NAME                         STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                       KERNEL-VERSION              CONTAINER-RUNTIME
+curso-k8s-l1-control-plane   Ready    control-plane   31s   v1.37.0   172.18.0.5    <none>        Debian GNU/Linux 13 (trixie)   6.8.0-100-generic (arm64)   containerd://2.3.4
+curso-k8s-l1-worker          Ready    <none>          16s   v1.37.0   172.18.0.6    <none>        Debian GNU/Linux 13 (trixie)   6.8.0-100-generic (arm64)   containerd://2.3.4
+curso-k8s-l1-worker2         Ready    <none>          16s   v1.37.0   172.18.0.7    <none>        Debian GNU/Linux 13 (trixie)   6.8.0-100-generic (arm64)   containerd://2.3.4
+
+$ kubectl cluster-info
+Kubernetes control plane is running at https://127.0.0.1:54589
+CoreDNS is running at https://127.0.0.1:54589/api/v1/namespaces/kube-system/services/kube-dns:dns/proxy
+
+To further debug and diagnose cluster problems, use 'kubectl cluster-info dump'.
+
+$ kind get nodes --name curso-k8s-l1
+curso-k8s-l1-worker
+curso-k8s-l1-control-plane
+curso-k8s-l1-worker2
+
+$ docker ps --filter label=io.x-k8s.kind.cluster=curso-k8s-l1 --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
+NAMES                        IMAGE                  PORTS
+curso-k8s-l1-worker          kindest/node:v1.37.0   
+curso-k8s-l1-control-plane   kindest/node:v1.37.0   127.0.0.1:54589->6443/tcp
+curso-k8s-l1-worker2         kindest/node:v1.37.0   
+
+$ kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=240s
+pod/coredns-559f6c778d-27jlk condition met
+pod/coredns-559f6c778d-fd4kh condition met
+pod/etcd-curso-k8s-l1-control-plane condition met
+pod/kindnet-n44qw condition met
+pod/kindnet-rf64g condition met
+pod/kindnet-xsc6h condition met
+pod/kube-apiserver-curso-k8s-l1-control-plane condition met
+pod/kube-controller-manager-curso-k8s-l1-control-plane condition met
+pod/kube-proxy-hxjzg condition met
+pod/kube-proxy-jp497 condition met
+pod/kube-proxy-m4r92 condition met
+pod/kube-scheduler-curso-k8s-l1-control-plane condition met
+
+$ kubectl get pods -n kube-system -o wide
+NAME                                                 READY   STATUS    RESTARTS   AGE   IP           NODE                         NOMINATED NODE   READINESS GATES
+coredns-559f6c778d-27jlk                             1/1     Running   0          23s   10.244.0.4   curso-k8s-l1-control-plane   <none>           <none>
+coredns-559f6c778d-fd4kh                             1/1     Running   0          23s   10.244.0.2   curso-k8s-l1-control-plane   <none>           <none>
+etcd-curso-k8s-l1-control-plane                      1/1     Running   0          31s   172.18.0.5   curso-k8s-l1-control-plane   <none>           <none>
+kindnet-n44qw                                        1/1     Running   0          18s   172.18.0.7   curso-k8s-l1-worker2         <none>           <none>
+kindnet-rf64g                                        1/1     Running   0          23s   172.18.0.5   curso-k8s-l1-control-plane   <none>           <none>
+kindnet-xsc6h                                        1/1     Running   0          18s   172.18.0.6   curso-k8s-l1-worker          <none>           <none>
+kube-apiserver-curso-k8s-l1-control-plane            1/1     Running   0          31s   172.18.0.5   curso-k8s-l1-control-plane   <none>           <none>
+kube-controller-manager-curso-k8s-l1-control-plane   1/1     Running   0          32s   172.18.0.5   curso-k8s-l1-control-plane   <none>           <none>
+kube-proxy-hxjzg                                     1/1     Running   0          18s   172.18.0.7   curso-k8s-l1-worker2         <none>           <none>
+kube-proxy-jp497                                     1/1     Running   0          18s   172.18.0.6   curso-k8s-l1-worker          <none>           <none>
+kube-proxy-m4r92                                     1/1     Running   0          23s   172.18.0.5   curso-k8s-l1-control-plane   <none>           <none>
+kube-scheduler-curso-k8s-l1-control-plane            1/1     Running   0          32s   172.18.0.5   curso-k8s-l1-control-plane   <none>           <none>
+
+$ kubectl get storageclass
+NAME                 PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+standard (default)   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  29s
+
+=== 6. inotify: los tres nodos comparten el núcleo ===
+
+$ docker exec curso-k8s-l1-control-plane cat /proc/sys/fs/inotify/max_user_instances
+512
+
+$ docker exec curso-k8s-l1-worker cat /proc/sys/fs/inotify/max_user_instances
+512
+
+$ docker exec curso-k8s-l1-worker2 cat /proc/sys/fs/inotify/max_user_instances
+512
+
+$ docker exec curso-k8s-l1-control-plane sh -c 'find /proc/[0-9]*/fd -lname anon_inode:inotify 2>/dev/null | wc -l'
+45
+
+$ docker exec curso-k8s-l1-worker sh -c 'find /proc/[0-9]*/fd -lname anon_inode:inotify 2>/dev/null | wc -l'
+18
+
+$ docker exec curso-k8s-l1-worker2 sh -c 'find /proc/[0-9]*/fd -lname anon_inode:inotify 2>/dev/null | wc -l'
+18
+
+=== 7. Dos contextos: cambiar de clúster sin querer ===
+
+$ kubectl config set-cluster otro --server=https://127.0.0.1:1
+Cluster "otro" set.
+
+$ kubectl config set-credentials nadie --token=token-de-mentira
+User "nadie" set.
+
+$ kubectl config set-context otro --cluster=otro --user=nadie
+Context "otro" created.
+
+$ kubectl config get-contexts
+CURRENT   NAME                CLUSTER             AUTHINFO            NAMESPACE
+*         kind-curso-k8s-l1   kind-curso-k8s-l1   kind-curso-k8s-l1   
+          otro                otro                nadie               
+
+$ kubectl config use-context otro
+Switched to context "otro".
+
+$ (la comprobación del contexto, antes de un kubectl get nodes)
+ALTO: el contexto activo es «otro», no «kind-curso-k8s-l1». No sigo.
+[el guion NO corre kubectl get nodes: se detuvo a tiempo]
+
+(Sin la comprobación, kubectl le habla a «otro»:)
+
+$ kubectl get nodes --request-timeout=5s
+E1021 07:11:02.007697   96846 memcache.go:381] "Couldn't get current server API group list" err="Get \"https://127.0.0.1:1/api?timeout=5s\": dial tcp 127.0.0.1:1: connect: connection refused"
+E1021 07:11:02.007948   96846 memcache.go:381] "Couldn't get current server API group list" err="Get \"https://127.0.0.1:1/api?timeout=5s\": dial tcp 127.0.0.1:1: connect: connection refused"
+E1021 07:11:02.009279   96846 memcache.go:381] "Couldn't get current server API group list" err="Get \"https://127.0.0.1:1/api?timeout=5s\": dial tcp 127.0.0.1:1: connect: connection refused"
+E1021 07:11:02.009582   96846 memcache.go:381] "Couldn't get current server API group list" err="Get \"https://127.0.0.1:1/api?timeout=5s\": dial tcp 127.0.0.1:1: connect: connection refused"
+E1021 07:11:02.010566   96846 memcache.go:381] "Couldn't get current server API group list" err="Get \"https://127.0.0.1:1/api?timeout=5s\": dial tcp 127.0.0.1:1: connect: connection refused"
+The connection to the server 127.0.0.1:1 was refused - did you specify the right host or port?
+[código de salida: 1]
+
+$ kubectl --context kind-curso-k8s-l1 get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l1-control-plane   Ready    control-plane   34s   v1.37.0
+curso-k8s-l1-worker          Ready    <none>          19s   v1.37.0
+curso-k8s-l1-worker2         Ready    <none>          19s   v1.37.0
+
+$ kubectl config use-context kind-curso-k8s-l1
+Switched to context "kind-curso-k8s-l1".
+
+$ kubectl config delete-context otro
+deleted context otro from /tmp/curso-k8s-l1.LWx1/kubeconfig
+
+$ kubectl config delete-cluster otro
+deleted cluster otro from /tmp/curso-k8s-l1.LWx1/kubeconfig
+
+$ kubectl config delete-user nadie
+deleted user nadie from /tmp/curso-k8s-l1.LWx1/kubeconfig
+
+=== 8. El error de la lección: crear lo que ya existe ===
+
+$ kind create cluster --name curso-k8s-l1 --config kind-curso.yaml
+ERROR: failed to create cluster: node(s) already exist for a cluster with the name "curso-k8s-l1"
+[código de salida: 1]
+
+=== 9. Perder el contexto y recuperarlo ===
+
+$ kubectl config delete-context kind-curso-k8s-l1
+warning: this removed your active context, use "kubectl config use-context" to select a different one
+deleted context kind-curso-k8s-l1 from /tmp/curso-k8s-l1.LWx1/kubeconfig
+
+$ kubectl config get-contexts
+CURRENT   NAME   CLUSTER   AUTHINFO   NAMESPACE
+
+$ kind export kubeconfig --name curso-k8s-l1
+Set kubectl context to "kind-curso-k8s-l1"
+
+$ kubectl config current-context
+kind-curso-k8s-l1
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l1-control-plane   Ready    control-plane   34s   v1.37.0
+curso-k8s-l1-worker          Ready    <none>          19s   v1.37.0
+curso-k8s-l1-worker2         Ready    <none>          19s   v1.37.0
+
+=== 10. Borrar y recrear ===
+
+$ kind delete cluster --name curso-k8s-l1
+Deleting cluster "curso-k8s-l1" ...
+Deleted nodes: ["curso-k8s-l1-worker" "curso-k8s-l1-control-plane" "curso-k8s-l1-worker2"]
+(borrar tardó 1 s)
+
+$ kubectl config current-context
+error: current-context is not set
+[código de salida: 1]
+
+$ kubectl config get-contexts
+CURRENT   NAME   CLUSTER   AUTHINFO   NAMESPACE
+
+$ docker ps --filter label=io.x-k8s.kind.cluster=curso-k8s-l1 --format '{{.Names}}'
+
+$ kind delete cluster --name curso-k8s-l1
+Deleting cluster "curso-k8s-l1" ...
+
+$ kind create cluster --name curso-k8s-l1 --config kind-curso.yaml
+Creating cluster "curso-k8s-l1" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-curso-k8s-l1"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-curso-k8s-l1
+
+Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/
+(recrear tardó 26 s)
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=240s
+node/curso-k8s-l1-control-plane condition met
+node/curso-k8s-l1-worker condition met
+node/curso-k8s-l1-worker2 condition met
+
+$ kubectl get nodes --no-headers | wc -l
+3
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l1-control-plane   Ready    control-plane   30s   v1.37.0
+curso-k8s-l1-worker          Ready    <none>          15s   v1.37.0
+curso-k8s-l1-worker2         Ready    <none>          16s   v1.37.0
+
+=== 11. Al salir, el trap borra el clúster ===

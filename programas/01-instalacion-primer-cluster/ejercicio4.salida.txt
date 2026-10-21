@@ -1,0 +1,66 @@
+
+$ kind create cluster --name curso-k8s-l1 --config kind-curso.yaml
+(creado; se omite la animación de kind)
+
+$ kind create cluster --name curso-k8s-l1b 
+(creado; se omite la animación de kind)
+
+## 1. ¿Cuál quedó activo?
+
+$ kubectl config get-contexts
+CURRENT   NAME                 CLUSTER              AUTHINFO             NAMESPACE
+          kind-curso-k8s-l1    kind-curso-k8s-l1    kind-curso-k8s-l1    
+*         kind-curso-k8s-l1b   kind-curso-k8s-l1b   kind-curso-k8s-l1b   
+
+## 2. Los nodos de cada uno, con --context
+
+$ kubectl --context kind-curso-k8s-l1 wait --for=condition=Ready nodes --all --timeout=240s
+node/curso-k8s-l1-control-plane condition met
+node/curso-k8s-l1-worker condition met
+node/curso-k8s-l1-worker2 condition met
+
+$ kubectl --context kind-curso-k8s-l1 get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l1-control-plane   Ready    control-plane   30s   v1.37.0
+curso-k8s-l1-worker          Ready    <none>          15s   v1.37.0
+curso-k8s-l1-worker2         Ready    <none>          15s   v1.37.0
+
+$ kubectl --context kind-curso-k8s-l1b wait --for=condition=Ready nodes --all --timeout=240s
+node/curso-k8s-l1b-control-plane condition met
+
+$ kubectl --context kind-curso-k8s-l1b get nodes
+NAME                          STATUS   ROLES           AGE   VERSION
+curso-k8s-l1b-control-plane   Ready    control-plane   20s   v1.37.0
+
+## 3. Borrar solo el segundo y volver al primero
+
+$ kind delete cluster --name curso-k8s-l1b
+Deleting cluster "curso-k8s-l1b" ...
+Deleted nodes: ["curso-k8s-l1b-control-plane"]
+
+$ kubectl config current-context
+error: current-context is not set
+[código de salida: 1]
+
+$ kubectl config get-contexts
+CURRENT   NAME                CLUSTER             AUTHINFO            NAMESPACE
+          kind-curso-k8s-l1   kind-curso-k8s-l1   kind-curso-k8s-l1   
+
+$ kubectl config use-context kind-curso-k8s-l1
+Switched to context "kind-curso-k8s-l1".
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l1-control-plane   Ready    control-plane   46s   v1.37.0
+curso-k8s-l1-worker          Ready    <none>          31s   v1.37.0
+curso-k8s-l1-worker2         Ready    <none>          31s   v1.37.0
+
+## 4. Borrar el del curso y comprobar que no queda nada
+
+$ kind delete cluster --name curso-k8s-l1
+Deleting cluster "curso-k8s-l1" ...
+Deleted nodes: ["curso-k8s-l1-control-plane" "curso-k8s-l1-worker" "curso-k8s-l1-worker2"]
+
+$ docker ps --filter label=io.x-k8s.kind.cluster=curso-k8s-l1 --format {{.Names}}
+
+$ docker ps --filter label=io.x-k8s.kind.cluster=curso-k8s-l1b --format {{.Names}}
