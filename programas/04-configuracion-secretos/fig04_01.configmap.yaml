@@ -1,0 +1,12 @@
+# fig04_01.configmap.yaml — Lección 4, sección 4.2: un ConfigMap escrito a mano.
+# Guarda la lista de servicios que el revisor revisa, fuera del Deployment. Tiene
+# un nombre FIJO (revisor-config): la sección 4.3 muestra por qué eso es un
+# problema y la 4.5 lo resuelve con el generador de Kustomize.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: revisor-config
+  labels:
+    app: revisor
+data:
+  REVISOR_SERVICIOS: "prueba http://prueba:9000/ 2s"

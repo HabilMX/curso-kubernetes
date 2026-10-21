@@ -1,0 +1,51 @@
+# fig04_02.revisor-con-configmap.yaml — Lección 4, sección 4.2: el Deployment de
+# la Lección 3 con UNA diferencia: REVISOR_SERVICIOS ya no va escrita aquí, se
+# lee del ConfigMap revisor-config (fig04_01). Todavía sin token: el Secret llega
+# en 4.4. El estado final de la lección es revisor-deployment.yaml.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: revisor
+  template:
+    metadata:
+      labels:
+        app: revisor
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: revisor
+        image: curso-docker-revisor:1.6.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: REVISOR_SERVICIOS
+          valueFrom:
+            configMapKeyRef:
+              name: revisor-config
+              key: REVISOR_SERVICIOS
+        volumeMounts:
+        - name: datos
+          mountPath: /datos
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      volumes:
+      - name: datos
+        emptyDir:
+          sizeLimit: 10Mi

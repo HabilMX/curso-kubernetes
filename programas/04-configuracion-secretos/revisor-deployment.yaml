@@ -1,0 +1,59 @@
+# revisor-deployment.yaml — Lección 4: la configuración llega de un ConfigMap
+# (por variable) y el token de un Secret (por archivo, inmutable).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: revisor
+  template:
+    metadata:
+      labels:
+        app: revisor
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: revisor
+        image: curso-docker-revisor:1.6.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: REVISOR_SERVICIOS
+          valueFrom:
+            configMapKeyRef:
+              name: revisor-config
+              key: REVISOR_SERVICIOS
+        - name: REVISOR_TOKEN_ARCHIVO
+          value: /secretos/token
+        volumeMounts:
+        - name: datos
+          mountPath: /datos
+        - name: token
+          mountPath: /secretos
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      volumes:
+      - name: datos
+        emptyDir:
+          sizeLimit: 10Mi
+      - name: token
+        secret:
+          secretName: revisor-token
+          defaultMode: 0440

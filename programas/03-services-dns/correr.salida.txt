@@ -1,0 +1,445 @@
+# corrida: 2026-10-21 07:20 CST · clúster curso-k8s-l3 · kind v0.33.0 · kubectl v1.37.1
+
+## Punto de partida: el clúster y el revisor de la Lección 2
+
+$ kind create cluster --name curso-k8s-l3 --config kind-curso.yaml
+(crear el clúster y esperar a que esté listo tardó 46 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l3
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l3-control-plane   Ready    control-plane   34s   v1.37.0
+curso-k8s-l3-worker          Ready    <none>          18s   v1.37.0
+curso-k8s-l3-worker2         Ready    <none>          18s   v1.37.0
+
+$ docker image ls curso-docker-revisor:1.6.0 --format '{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}'
+curso-docker-revisor:1.6.0 bd1b2e7d91b8 16.2MB
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l3
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l3-control-plane", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l3-worker", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l3-worker2", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l3-control-plane", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l3-worker", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l3-worker2", loading...
+
+$ kubectl apply -f revisor-deployment.yaml
+deployment.apps/revisor created
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 2 of 3 updated replicas are available...
+deployment "revisor" successfully rolled out
+
+## 3.1 Una IP de Pod no sirve como dirección
+
+$ kubectl get pods -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-697fb84f97-82d87   1/1     Running   0          1s    10.244.1.2   curso-k8s-l3-worker2   <none>           <none>
+revisor-697fb84f97-drv5h   1/1     Running   0          1s    10.244.2.3   curso-k8s-l3-worker    <none>           <none>
+revisor-697fb84f97-nq74v   1/1     Running   0          1s    10.244.2.2   curso-k8s-l3-worker    <none>           <none>
+
+$ kubectl delete pod revisor-697fb84f97-82d87
+pod "revisor-697fb84f97-82d87" deleted from default namespace
+
+$ kubectl get pods -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-697fb84f97-drv5h   1/1     Running   0          2s    10.244.2.3   curso-k8s-l3-worker    <none>           <none>
+revisor-697fb84f97-nq74v   1/1     Running   0          2s    10.244.2.2   curso-k8s-l3-worker    <none>           <none>
+revisor-697fb84f97-z79jh   1/1     Running   0          1s    10.244.1.3   curso-k8s-l3-worker2   <none>           <none>
+
+## 3.2 El Service del revisor
+
+$ kubectl apply -f revisor-service.yaml
+service/revisor created
+
+$ kubectl get services
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP   41s
+revisor      ClusterIP   10.96.144.175   <none>        80/TCP    2s
+
+$ kubectl describe service revisor
+Name:                     revisor
+Namespace:                default
+Labels:                   app=revisor
+Annotations:              <none>
+Selector:                 app=revisor
+Type:                     ClusterIP
+IP Family Policy:         SingleStack
+IP Families:              IPv4
+IP:                       10.96.144.175
+IPs:                      10.96.144.175
+Port:                     http  80/TCP
+TargetPort:               http/TCP
+Endpoints:                10.244.2.2:8080,10.244.2.3:8080,10.244.1.3:8080
+Session Affinity:         None
+Internal Traffic Policy:  Cluster
+Events:                   <none>
+
+## 3.3 Los tres puertos
+
+$ kubectl get service revisor -o jsonpath='port={.spec.ports[0].port} targetPort={.spec.ports[0].targetPort}{"\n"}'
+port=80 targetPort=http
+
+$ kubectl get pods -l app=revisor -o jsonpath='{range .items[*]}{.metadata.name} {.spec.containers[0].ports[0].name}={.spec.containers[0].ports[0].containerPort}{"\n"}{end}'
+revisor-697fb84f97-drv5h http=8080
+revisor-697fb84f97-nq74v http=8080
+revisor-697fb84f97-z79jh http=8080
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor -o jsonpath='{.items[0].ports}{"\n"}'
+[{"name":"http","port":8080,"protocol":"TCP"}]
+
+## 3.4 Selectores y EndpointSlices
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor
+NAME            ADDRESSTYPE   PORTS   ENDPOINTS                          AGE
+revisor-6jh2f   IPv4          8080    10.244.2.2,10.244.2.3,10.244.1.3   3s
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor -o jsonpath='{range .items[0].endpoints[*]}{.addresses[0]} {.targetRef.name} {.nodeName} ready={.conditions.ready}{"\n"}{end}'
+10.244.2.2 revisor-697fb84f97-nq74v curso-k8s-l3-worker ready=true
+10.244.2.3 revisor-697fb84f97-drv5h curso-k8s-l3-worker ready=true
+10.244.1.3 revisor-697fb84f97-z79jh curso-k8s-l3-worker2 ready=true
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor -o jsonpath='{.items[0].metadata.ownerReferences[0].kind}/{.items[0].metadata.ownerReferences[0].name}{"\n"}'
+Service/revisor
+
+$ kubectl delete pod revisor-697fb84f97-drv5h
+pod "revisor-697fb84f97-drv5h" deleted from default namespace
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor -o jsonpath='{range .items[0].endpoints[*]}{.addresses[0]} {.targetRef.name} {.nodeName} ready={.conditions.ready}{"\n"}{end}'
+10.244.2.2 revisor-697fb84f97-nq74v curso-k8s-l3-worker ready=true
+10.244.1.3 revisor-697fb84f97-z79jh curso-k8s-l3-worker2 ready=true
+10.244.1.4 revisor-697fb84f97-mjbff curso-k8s-l3-worker2 ready=true
+
+$ kubectl get endpoints revisor
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME      ENDPOINTS                                         AGE
+revisor   10.244.1.3:8080,10.244.1.4:8080,10.244.2.2:8080   6s
+
+## 3.5 Un Pod de depuración
+
+$ kubectl apply -f depurar.yaml
+pod/depurar created
+
+$ kubectl get pod depurar -o wide
+NAME      READY   STATUS    RESTARTS   AGE   IP           NODE                  NOMINATED NODE   READINESS GATES
+depurar   1/1     Running   0          29s   10.244.2.4   curso-k8s-l3-worker   <none>           <none>
+
+$ kubectl exec depurar -- id
+uid=100(curl_user) gid=101(curl_group) groups=101(curl_group)
+
+$ kubectl exec depurar -- curl -s http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl exec depurar -- curl -s http://10.96.144.175/salud
+{"estado":"vivo","version":"1.6.0"}
+
+## 3.6 El DNS del clúster
+
+$ kubectl exec depurar -- cat /etc/resolv.conf
+search default.svc.cluster.local svc.cluster.local cluster.local
+nameserver 10.96.0.10
+options ndots:5
+
+$ kubectl get service -n kube-system kube-dns
+NAME       TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)                  AGE
+kube-dns   ClusterIP   10.96.0.10   <none>        53/UDP,53/TCP,9153/TCP   74s
+
+$ kubectl get pods -n kube-system -l k8s-app=kube-dns -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                         NOMINATED NODE   READINESS GATES
+coredns-559f6c778d-cf8pv   1/1     Running   0          65s   10.244.0.2   curso-k8s-l3-control-plane   <none>           <none>
+coredns-559f6c778d-h2hgl   1/1     Running   0          65s   10.244.0.4   curso-k8s-l3-control-plane   <none>           <none>
+
+$ kubectl exec depurar -- nslookup revisor.default.svc.cluster.local
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+Name:	revisor.default.svc.cluster.local
+Address: 10.96.144.175
+
+
+
+$ kubectl exec depurar -- nslookup revisor
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+** server can't find revisor.cluster.local: NXDOMAIN
+
+Name:	revisor.default.svc.cluster.local
+Address: 10.96.144.175
+
+** server can't find revisor.svc.cluster.local: NXDOMAIN
+
+
+** server can't find revisor.cluster.local: NXDOMAIN
+
+** server can't find revisor.svc.cluster.local: NXDOMAIN
+
+command terminated with exit code 1
+[código de salida: 1]
+
+$ kubectl exec depurar -- curl -s http://revisor.default/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl exec depurar -- nslookup no-existe.default.svc.cluster.local
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+** server can't find no-existe.default.svc.cluster.local: NXDOMAIN
+
+** server can't find no-existe.default.svc.cluster.local: NXDOMAIN
+
+command terminated with exit code 1
+[código de salida: 1]
+
+## 3.7 El servicio de prueba: el revisor ya tiene a quién revisar
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA        4ms  no responde: Get "http://prueba:9000/": dial tcp: lookup prueba on 10.96.0.10:53: no such host
+
+$ kubectl apply -f prueba-deployment.yaml -f prueba-service.yaml
+deployment.apps/prueba created
+service/prueba created
+
+$ kubectl get services
+NAME         TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP    79s
+prueba       ClusterIP   10.96.236.7     <none>        9000/TCP   3s
+revisor      ClusterIP   10.96.144.175   <none>        80/TCP     40s
+
+$ kubectl exec depurar -- curl -s http://prueba:9000/modo
+modo: sano
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           1ms  200
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/caido
+modo: caido
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA        1ms  codigo 503
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/lento
+modo: lento
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA     2.002s  se acabo el tiempo de espera
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/sano
+modo: sano
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           1ms  200
+
+## 3.8 Cómo reparte un Service
+
+$ kubectl exec depurar -- sh -c 'for i in $(seq 1 30); do curl -s -o /dev/null http://revisor/salud; done; echo 30 peticiones'
+30 peticiones
+
+$ kubectl logs -l app=revisor --prefix --tail=-1 | grep 'GET /salud' | cut -d' ' -f1 | sort | uniq -c
+   6 [pod/revisor-697fb84f97-mjbff/revisor]
+  13 [pod/revisor-697fb84f97-nq74v/revisor]
+  14 [pod/revisor-697fb84f97-z79jh/revisor]
+
+## 3.9 port-forward, solo hacia 127.0.0.1
+
+$ kubectl port-forward --address 127.0.0.1 service/revisor 18080:80 &
+Forwarding from 127.0.0.1:18080 -> 8080
+
+$ curl -s http://127.0.0.1:18080/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ curl -s 'http://127.0.0.1:18080/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK            0s  200
+
+$ lsof -nP -iTCP:18080 -sTCP:LISTEN | awk '{print $1, $8, $9, $10}'
+COMMAND NODE NAME 
+kubectl TCP 127.0.0.1:18080 (LISTEN)
+
+## Hábito de seguridad: un ClusterIP no se ve desde fuera
+
+$ docker port curso-k8s-l3-control-plane
+6443/tcp -> 127.0.0.1:59190
+
+$ docker port curso-k8s-l3-worker
+
+$ docker port curso-k8s-l3-worker2
+
+$ curl -s -m 3 http://10.96.144.175/salud
+[código de salida: 28]
+
+## El error: un selector que no selecciona a nadie
+
+$ kubectl apply -f fig03_01.selector-malo.yaml
+service/revisor configured
+
+$ kubectl exec depurar -- curl -s -m 3 -o /dev/null -w 'tardó %{time_total} s\n' http://revisor/salud
+tardó 0.001120 s
+command terminated with exit code 7
+[código de salida: 7]
+
+$ kubectl exec depurar -- nslookup revisor.default.svc.cluster.local
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+
+Name:	revisor.default.svc.cluster.local
+Address: 10.96.144.175
+
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor
+NAME            ADDRESSTYPE   PORTS     ENDPOINTS   AGE
+revisor-6jh2f   IPv4          <unset>   <unset>     51s
+
+$ kubectl describe service revisor | grep -E '^(Selector|Endpoints):'
+Selector:                 app=revisr
+Endpoints:                
+
+$ kubectl get pods -l app=revisr
+No resources found in default namespace.
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-697fb84f97-mjbff   1/1     Running   0          48s
+revisor-697fb84f97-nq74v   1/1     Running   0          53s
+revisor-697fb84f97-z79jh   1/1     Running   0          52s
+
+$ kubectl apply -f revisor-service.yaml
+service/revisor configured
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor
+NAME            ADDRESSTYPE   PORTS   ENDPOINTS                          AGE
+revisor-6jh2f   IPv4          8080    10.244.2.2,10.244.1.4,10.244.1.3   53s
+
+$ kubectl exec depurar -- curl -s -m 3 http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+## Ejercicio 1: un targetPort donde nadie escucha
+
+$ kubectl apply -f fig03_02.puerto-malo.yaml
+service/revisor configured
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor
+NAME            ADDRESSTYPE   PORTS   ENDPOINTS                          AGE
+revisor-6jh2f   IPv4          8081    10.244.2.2,10.244.1.4,10.244.1.3   59s
+
+$ kubectl exec depurar -- curl -s -m 3 http://revisor/salud
+command terminated with exit code 7
+[código de salida: 7]
+
+$ kubectl apply -f revisor-service.yaml
+service/revisor configured
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor
+NAME            ADDRESSTYPE   PORTS   ENDPOINTS                          AGE
+revisor-6jh2f   IPv4          8080    10.244.2.2,10.244.1.4,10.244.1.3   64s
+
+$ kubectl exec depurar -- curl -s -m 3 http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+## Ejercicio 2: el Pod que se cuela en el Service
+
+$ kubectl apply -f fig03_03.colado.yaml
+pod/revisor-extra created
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   3/3     3            3           69s
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor -o jsonpath='{range .items[0].endpoints[*]}{.addresses[0]} {.targetRef.name}{"\n"}{end}'
+10.244.2.2 revisor-697fb84f97-nq74v
+10.244.1.4 revisor-697fb84f97-mjbff
+10.244.1.3 revisor-697fb84f97-z79jh
+10.244.2.6 revisor-extra
+
+$ kubectl exec depurar -- sh -c 'for i in $(seq 1 40); do curl -s -o /dev/null http://revisor/salud; done; echo 40 peticiones'
+40 peticiones
+
+$ kubectl logs revisor-extra | grep -c 'GET /salud'
+12
+
+$ kubectl delete pod revisor-extra
+pod "revisor-extra" deleted from default namespace
+
+## Ejercicio 3: port-forward y un rollout
+
+$ kubectl port-forward --address 127.0.0.1 service/revisor 18080:80 &
+
+$ curl -s -m 3 http://127.0.0.1:18080/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl rollout restart deployment/revisor
+deployment.apps/revisor restarted
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ curl -s -m 3 http://127.0.0.1:18080/salud
+[código de salida: 52]
+
+$ cat pf.log    (lo que escribió el port-forward)
+Forwarding from 127.0.0.1:18080 -> 8080
+Handling connection for 18080
+Handling connection for 18080
+E1021 07:23:02.902759   47411 portforward.go:549] "An error occurred forwarding" err="error forwarding port 8080 to pod 0fca0827e49054df03968556e140e1217908dcc55efd6d20e7210aa4479c36eb, uid : network namespace for sandbox \"0fca0827e49054df03968556e140e1217908dcc55efd6d20e7210aa4479c36eb\" is closed" localPort=18080 remotePort=8080
+error: lost connection to pod
+(el port-forward ya había terminado solo)
+
+## Cómo sé que lo logré: el estado final
+
+$ kubectl diff -f revisor-deployment.yaml -f revisor-service.yaml -f prueba-deployment.yaml -f prueba-service.yaml >/dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+
+$ kubectl get deployments,services
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           43s
+deployment.apps/revisor   3/3     3            3           82s
+
+NAME                 TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/kubernetes   ClusterIP   10.96.0.1       <none>        443/TCP    119s
+service/prueba       ClusterIP   10.96.236.7     <none>        9000/TCP   43s
+service/revisor      ClusterIP   10.96.144.175   <none>        80/TCP     80s
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=revisor
+NAME            ADDRESSTYPE   PORTS   ENDPOINTS                          AGE
+revisor-6jh2f   IPv4          8080    10.244.2.7,10.244.1.5,10.244.1.6   80s
+
+$ kubectl exec depurar -- curl -s http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+$ kubectl delete pod depurar --wait=false
+pod "depurar" deleted from default namespace
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l3
+Deleting cluster "curso-k8s-l3" ...
+Deleted nodes: ["curso-k8s-l3-control-plane" "curso-k8s-l3-worker" "curso-k8s-l3-worker2"]
+(borrar tardó 1 s)
+
+$ kind get clusters | grep -c curso-k8s-l3
+0
+(la corrida completa tardó 136 s)

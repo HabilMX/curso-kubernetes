@@ -1,0 +1,91 @@
+name: Verificar el curso
+
+# En cada cambio se comprueba que los manifiestos del curso se arman y son
+# válidos para la versión de Kubernetes del curso (la de kindest/node). No se
+# levanta ningún clúster: kubectl kustomize arma, kubeconform valida contra los
+# esquemas. Esta corrida es pública: cualquiera puede abrirla y ver el
+# resultado de cada paso.
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  KUBERNETES_VERSION: 1.37.0
+  KUBECONFORM_VERSION: v0.8.0
+  KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: El medidor de profundidad sabe fallar (control positivo)
+        run: herramientas/autoprueba-medir-profundidad.sh
+
+      - name: La profundidad se mide (piso de 3,000 palabras por lección, mediana de 4,000)
+        run: herramientas/medir-profundidad.sh
+
+      - name: Instalar kubeconform (versión fijada, suma verificada)
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          curl -fsSLo kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  kubeconform.tar.gz" | sha256sum -c -
+          tar -xzf kubeconform.tar.gz kubeconform
+          ./kubeconform -v
+          kubectl version --client
+
+      - name: Cada kustomization del curso se arma
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/armados"
+          armadas=0
+          while IFS= read -r k; do
+            carpeta="$(dirname "$k")"
+            # Las que traen manifiestos de la red (MetalLB, Envoy Gateway, metrics-server)
+            # dependen de un servicio externo: no se arman aquí.
+            if grep -qE '^[[:space:]]*-[[:space:]]*https?://' "$k"; then
+              echo "No se arma (trae manifiestos de la red): $carpeta"
+              continue
+            fi
+            # El token no se versiona (lo genera correr.sh): para armar basta uno de relleno.
+            if grep -q 'token.txt' "$k" && [ ! -f "$carpeta/token.txt" ]; then
+              printf 'relleno-solo-para-armar\n' > "$carpeta/token.txt"
+            fi
+            echo "::group::$carpeta"
+            kubectl kustomize "$carpeta" > "$RUNNER_TEMP/armados/$(echo "$carpeta" | tr '/' '_').yaml"
+            grep -E '^kind:' "$RUNNER_TEMP/armados/$(echo "$carpeta" | tr '/' '_').yaml" | sort | uniq -c
+            echo "::endgroup::"
+            armadas=$((armadas + 1))
+          done < <(find programas -name kustomization.yaml -not -path '*/_contrato/*' | sort)
+          echo "Kustomizations armadas: $armadas"
+
+      - name: Los manifiestos y lo armado son válidos para Kubernetes ${{ env.KUBERNETES_VERSION }}
+        run: |
+          set -euo pipefail
+          # Los manifiestos sueltos del curso (sin las kustomization.yaml, que no son
+          # objetos de Kubernetes) y lo que armó el paso anterior. -strict rechaza
+          # campos que no existen; un tipo sin esquema (la configuración de kind, los
+          # CRD de Gateway API) se reporta como omitido, no como válido.
+          find programas -name '*.yaml' -not -name kustomization.yaml -not -path '*/_contrato/*' | sort > "$RUNNER_TEMP/manifiestos.txt"
+          find "$RUNNER_TEMP/armados" -name '*.yaml' | sort >> "$RUNNER_TEMP/manifiestos.txt"
+          cat "$RUNNER_TEMP/manifiestos.txt"
+          xargs "$RUNNER_TEMP/kubeconform" -strict -summary -ignore-missing-schemas \
+            -kubernetes-version "$KUBERNETES_VERSION" -output text \
+            < "$RUNNER_TEMP/manifiestos.txt" | tee "$RUNNER_TEMP/kubeconform.txt"
+          validos="$(sed -nE 's/.*Valid: ([0-9]+).*/\1/p' "$RUNNER_TEMP/kubeconform.txt" | tail -1)"
+          if [ -z "$validos" ] || [ "$validos" -eq 0 ]; then
+            echo "kubeconform no validó ningún recurso: este paso no verificó nada."
+            exit 1
+          fi
+
+      - name: Nota sobre la revisión previa a publicar
+        run: |
+          echo "La revisión de material no publicable (rutas internas, nombres reservados,"
+          echo "direcciones de la infraestructura) se corre ANTES de publicar, con la lista"
+          echo "de patrones que vive en el repositorio de trabajo y no se publica."

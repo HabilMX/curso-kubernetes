@@ -1,0 +1,18 @@
+# fig03_01.selector-malo.yaml — FALLA A PROPÓSITO: el mismo Service del revisor
+# con una letra de menos en el selector (revisr). Se aplica encima del bueno, el
+# Service se queda sin a quién mandar tráfico y curl sale con código 7. Se
+# corrige volviendo a aplicar revisor-service.yaml.
+apiVersion: v1
+kind: Service
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  type: ClusterIP
+  selector:
+    app: revisr
+  ports:
+  - name: http
+    port: 80
+    targetPort: http

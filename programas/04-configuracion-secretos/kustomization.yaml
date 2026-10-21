@@ -1,0 +1,21 @@
+# kustomization.yaml — Lección 4. Se aplica con: kubectl apply -k .
+# El token NO se versiona: token.txt lo genera correr.sh (openssl rand -hex 16)
+# y está en .gitignore. Los generadores agregan un hash al nombre: si cambia el
+# contenido, cambia el nombre, y eso dispara el rollout del Deployment.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- revisor-deployment.yaml
+- revisor-service.yaml
+- prueba-deployment.yaml
+- prueba-service.yaml
+configMapGenerator:
+- name: revisor-config
+  literals:
+  - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s
+secretGenerator:
+- name: revisor-token
+  files:
+  - token=token.txt
+  options:
+    immutable: true

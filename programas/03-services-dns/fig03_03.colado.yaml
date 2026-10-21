@@ -1,0 +1,38 @@
+# fig03_03.colado.yaml — Ejercicio 2: el Pod suelto de la Lección 2 que lleva
+# app: revisor. El Deployment no lo adopta, pero el Service elige por app: revisor.
+# Pregunta: ¿cuántas direcciones tiene ahora el EndpointSlice? ¿Le llega tráfico?
+apiVersion: v1
+kind: Pod
+metadata:
+  name: revisor-extra
+  labels:
+    app: revisor
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: revisor
+    image: curso-docker-revisor:1.6.0
+    imagePullPolicy: IfNotPresent
+    ports:
+    - name: http
+      containerPort: 8080
+    env:
+    - name: REVISOR_SERVICIOS
+      value: "prueba http://prueba:9000/ 2s"
+    volumeMounts:
+    - name: datos
+      mountPath: /datos
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+  volumes:
+  - name: datos
+    emptyDir:
+      sizeLimit: 10Mi

@@ -1,0 +1,17 @@
+# fig03_02.puerto-malo.yaml — Ejercicio 1: el selector está bien, pero el
+# targetPort apunta a un número donde el revisor no escucha (8081 en lugar del
+# 8080 que se llama «http»). Pregunta: ¿el Service tiene endpoints? ¿Responde?
+apiVersion: v1
+kind: Service
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  type: ClusterIP
+  selector:
+    app: revisor
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8081

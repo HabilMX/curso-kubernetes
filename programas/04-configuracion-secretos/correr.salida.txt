@@ -1,0 +1,478 @@
+# corrida: 2026-10-21 07:26 CST · clúster curso-k8s-l4 · kind v0.33.0 · kubectl v1.37.1
+
+## 4.0 El clúster, como terminó la Lección 3
+
+$ kind create cluster --name curso-k8s-l4 --config kind-curso.yaml
+(crear el clúster y esperar a que esté listo tardó 42 s)
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l4
+(cargadas en los tres nodos)
+
+$ kubectl config current-context
+kind-curso-k8s-l4
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l4-control-plane   Ready    control-plane   38s   v1.37.0
+curso-k8s-l4-worker          Ready    <none>          23s   v1.37.0
+curso-k8s-l4-worker2         Ready    <none>          23s   v1.37.0
+
+$ kubectl apply -f punto-de-partida/revisor-deployment.yaml -f revisor-service.yaml -f prueba-deployment.yaml -f prueba-service.yaml -f depurar.yaml
+deployment.apps/revisor created
+service/revisor created
+deployment.apps/prueba created
+service/prueba created
+pod/depurar created
+
+$ kubectl get deployment,service
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           9s
+deployment.apps/revisor   3/3     3            3           9s
+
+NAME                 TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+service/kubernetes   ClusterIP   10.96.0.1      <none>        443/TCP    46s
+service/prueba       ClusterIP   10.96.199.61   <none>        9000/TCP   9s
+service/revisor      ClusterIP   10.96.4.106    <none>        80/TCP     9s
+
+## 4.1 La configuración escrita dentro del Deployment
+
+$ kubectl get deployment revisor -o jsonpath='{.spec.template.spec.containers[0].env}{"\n"}'
+[{"name":"REVISOR_SERVICIOS","value":"prueba http://prueba:9000/ 2s"}]
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+## 4.2 Un ConfigMap escrito a mano
+
+$ kubectl apply -f fig04_01.configmap.yaml
+configmap/revisor-config created
+
+$ kubectl get configmap revisor-config -o jsonpath='{.data}{"\n"}'
+{"REVISOR_SERVICIOS":"prueba http://prueba:9000/ 2s"}
+
+$ kubectl apply -f fig04_02.revisor-con-configmap.yaml
+deployment.apps/revisor configured
+
+$ kubectl describe pod revisor-66db8c7755-6mwlw | sed -n '/Environment:/,/Mounts:/p'
+    Environment:
+      REVISOR_SERVICIOS:  <set to the key 'REVISOR_SERVICIOS' of config map 'revisor-config'>  Optional: false
+    Mounts:
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+## 4.3 Cambiar el ConfigMap a mano: los Pods no se enteran
+
+$ kubectl get replicaset -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-66db8c7755   3         3         3       3s
+revisor-697fb84f97   0         0         0       12s
+
+$ kubectl patch configmap revisor-config -p '{"data":{"REVISOR_SERVICIOS":"prueba http://prueba:9000/ 2s,lento http://prueba:9000/ 500ms"}}'
+configmap/revisor-config patched
+(30 s después)
+
+$ kubectl get replicaset -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-66db8c7755   3         3         3       34s
+revisor-697fb84f97   0         0         0       43s
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           4ms  200
+
+$ kubectl rollout restart deployment/revisor
+deployment.apps/revisor restarted
+
+$ kubectl exec depurar -- curl -s 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+lento     OK           1ms  200
+prueba    OK           2ms  200
+
+$ kubectl rollout history deployment/revisor
+deployment.apps/revisor 
+REVISION  CHANGE-CAUSE
+1         <none>
+2         <none>
+3         <none>
+
+
+## 4.4 El token: se genera y no se versiona
+
+$ (umask 077; openssl rand -hex 16 > token.txt)
+
+$ ls -l token.txt | cut -d' ' -f1
+-rw-------
+
+$ wc -c < token.txt
+      33
+
+$ cat .gitignore
+token.txt
+
+$ git check-ignore -v token.txt
+programas/04-configuracion-secretos/.gitignore:1:token.txt	token.txt
+
+## 4.5 Kustomize: los generadores y el hash
+
+$ cat kustomization.yaml
+# kustomization.yaml — Lección 4. Se aplica con: kubectl apply -k .
+# El token NO se versiona: token.txt lo genera correr.sh (openssl rand -hex 16)
+# y está en .gitignore. Los generadores agregan un hash al nombre: si cambia el
+# contenido, cambia el nombre, y eso dispara el rollout del Deployment.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- revisor-deployment.yaml
+- revisor-service.yaml
+- prueba-deployment.yaml
+- prueba-service.yaml
+configMapGenerator:
+- name: revisor-config
+  literals:
+  - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s
+secretGenerator:
+- name: revisor-token
+  files:
+  - token=token.txt
+  options:
+    immutable: true
+
+$ kubectl kustomize . | grep -E '^  name: revisor-(config|token)'
+  name: revisor-config-t6cm6872fk
+  name: revisor-token-bh266kt42m
+
+$ kubectl kustomize . | grep -B4 -A3 '^kind: Secret'
+apiVersion: v1
+data:
+  token: NDMzYzdhZGZhNmZjNmZjM2QwMzY3NmI3ZjVjMjMzOWUK
+immutable: true
+kind: Secret
+metadata:
+  name: revisor-token-bh266kt42m
+type: Opaque
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-bh266kt42m created
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl get configmap
+NAME                        DATA   AGE
+kube-root-ca.crt            1      77s
+revisor-config              1      41s
+revisor-config-t6cm6872fk   1      4s
+
+$ kubectl get secret --field-selector type!=kubernetes.io/service-account-token
+NAME                       TYPE     DATA   AGE
+revisor-token-bh266kt42m   Opaque   1      4s
+
+$ kubectl delete configmap revisor-config
+configmap "revisor-config" deleted from default namespace
+
+$ kubectl get secret -o name | grep revisor-token | xargs kubectl get -o jsonpath='{.immutable}{"\n"}'
+true
+
+$ kubectl describe pod revisor-f6dd4cb4d-cg7tb | sed -n '/Environment:/,/Conditions:/p'
+    Environment:
+      REVISOR_SERVICIOS:      <set to the key 'REVISOR_SERVICIOS' of config map 'revisor-config-t6cm6872fk'>  Optional: false
+      REVISOR_TOKEN_ARCHIVO:  /secretos/token
+    Mounts:
+      /datos from datos (rw)
+      /secretos from token (ro)
+      /var/run/secrets/kubernetes.io/serviceaccount from kube-api-access-2gqd7 (ro)
+Conditions:
+
+$ kubectl exec depurar -- curl -s -o /dev/null -w '%{http_code}\n' http://revisor/api/estados
+401
+
+$ kubectl exec depurar -- curl -s http://revisor/api/estados
+{"error":"falta el token o no es válido"}
+
+$ kubectl exec depurar -- curl -s -H "Authorization: Bearer $(cat token.txt)" 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+$ kubectl exec deployment/revisor -- /revisor healthcheck
+sano
+
+## 4.5 El Secret, visto desde el nodo
+
+(Pod revisor-f6dd4cb4d-cg7tb, en el nodo curso-k8s-l4-worker)
+
+$ docker exec curso-k8s-l4-worker ls -ln /var/lib/kubelet/pods/a415d22b-9837-4123-a7d9-82b1baf9435a/volumes/kubernetes.io~secret/token/..data/
+total 4
+-r--r----- 1 0 65532 33 Oct 21 13:27 token
+
+$ docker exec curso-k8s-l4-worker sh -c 'mount | grep a415d22b-9837-4123-a7d9-82b1baf9435a | grep -E "secret/token "'
+tmpfs on /var/lib/kubelet/pods/a415d22b-9837-4123-a7d9-82b1baf9435a/volumes/kubernetes.io~secret/token type tmpfs (rw,relatime,size=16342676k,inode64,noswap)
+
+## 4.6 base64 no es cifrado
+
+$ kubectl get secret -o name | grep revisor-token | xargs kubectl get -o jsonpath='{.data.token}{"\n"}'
+NDMzYzdhZGZhNmZjNmZjM2QwMzY3NmI3ZjVjMjMzOWUK
+
+$ kubectl get secret -o name | grep revisor-token | xargs kubectl get -o jsonpath='{.data.token}' | base64 -d
+433c7adfa6fc6fc3d03676b7f5c2339e
+
+$ cat token.txt
+433c7adfa6fc6fc3d03676b7f5c2339e
+
+$ kubectl auth can-i get secrets
+yes
+
+## 4.7 Cambiar la lista en la kustomization dispara el rollout
+
+$ kubectl get replicaset -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-66db8c7755   0         0         0       43s
+revisor-697fb84f97   0         0         0       52s
+revisor-99546b58f    0         0         0       9s
+revisor-f6dd4cb4d    3         3         3       6s
+
+$ grep REVISOR_SERVICIOS kustomization.yaml
+  - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s,lento http://prueba:9000/ 500ms
+
+$ kubectl diff -k . | grep -E '^[-+] .*(REVISOR_SERVICIOS|name: revisor-config)'
+-              name: revisor-config-t6cm6872fk
++              name: revisor-config-7fbkh2926f
++  REVISOR_SERVICIOS: prueba http://prueba:9000/ 2s,lento http://prueba:9000/ 500ms
++  name: revisor-config-7fbkh2926f
+[código de salida: 1]
+
+$ kubectl apply -k .
+configmap/revisor-config-7fbkh2926f created
+secret/revisor-token-bh266kt42m unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get replicaset -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-66db8c7755   0         0         0       46s
+revisor-697fb84f97   0         0         0       55s
+revisor-769ff55c9c   3         3         3       3s
+revisor-99546b58f    0         0         0       12s
+revisor-f6dd4cb4d    0         0         0       9s
+
+$ kubectl exec depurar -- curl -s -H "Authorization: Bearer $(cat token.txt)" 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+lento     OK           1ms  200
+prueba    OK           1ms  200
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-bh266kt42m unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl exec depurar -- curl -s -H "Authorization: Bearer $(cat token.txt)" 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+## El error que vas a ver: sin fsGroup, el revisor no puede leer su token
+
+$ kubectl patch deployment revisor --type=json -p='[{"op":"remove","path":"/spec/template/spec/securityContext/fsGroup"}]'
+deployment.apps/revisor patched
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS   RESTARTS      AGE
+revisor-7ffcfb7646-2lsmc   0/1     Error    2 (23s ago)   24s
+revisor-7ffcfb7646-k4s2b   0/1     Error    2 (23s ago)   25s
+revisor-7ffcfb7646-th42g   0/1     Error    2 (24s ago)   25s
+
+$ kubectl logs revisor-7ffcfb7646-2lsmc
+revisor: leyendo el token de REVISOR_TOKEN_ARCHIVO: open /secretos/token: permission denied
+
+$ kubectl describe pod revisor-7ffcfb7646-2lsmc | sed -n '/^Events:/,$p'
+Events:
+  Type     Reason     Age                From               Message
+  ----     ------     ----               ----               -------
+  Normal   Scheduled  24s                default-scheduler  Successfully assigned default/revisor-7ffcfb7646-2lsmc to curso-k8s-l4-worker2
+  Normal   Pulled     11s (x3 over 24s)  kubelet            spec.containers{revisor}: Container image "curso-docker-revisor:1.6.0" already present on machine and can be accessed by the pod
+  Normal   Created    11s (x3 over 24s)  kubelet            spec.containers{revisor}: Container created
+  Normal   Started    11s (x3 over 24s)  kubelet            spec.containers{revisor}: Container started
+  Warning  BackOff    10s (x2 over 22s)  kubelet            spec.containers{revisor}: Back-off restarting failed container revisor in pod revisor-7ffcfb7646-2lsmc_default(c26f312f-6841-4911-bea8-6f14513b4a11)
+
+(Pod revisor-7ffcfb7646-2lsmc, en el nodo curso-k8s-l4-worker2)
+
+$ docker exec curso-k8s-l4-worker2 ls -ln /var/lib/kubelet/pods/c26f312f-6841-4911-bea8-6f14513b4a11/volumes/kubernetes.io~secret/token/..data/
+total 4
+-r--r----- 1 0 0 33 Oct 21 13:28 token
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   0/3     3            0           83s
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-bh266kt42m unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+## Hábito de seguridad: un Secret inmutable no se edita
+
+$ kubectl get secret -o name | grep revisor-token | xargs -I{} kubectl patch {} -p '{"data":{"token":"eA=="}}'
+The Secret "revisor-token-bh266kt42m" is invalid: data: Forbidden: field is immutable when `immutable` is set
+[código de salida: 1]
+
+## Ejercicio 1: una llave que no existe en el ConfigMap
+
+$ kubectl patch deployment revisor --type=json -p='[{"op":"replace","path":"/spec/template/spec/containers/0/env/0/valueFrom/configMapKeyRef/key","value":"REVISOR_SERVICIO"}]'
+deployment.apps/revisor patched
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS                       RESTARTS   AGE
+revisor-84564b6875-ssrsx   0/1     CreateContainerConfigError   0          15s
+revisor-f6dd4cb4d-6nrc8    1/1     Running                      0          17s
+revisor-f6dd4cb4d-9sjs2    1/1     Running                      0          17s
+revisor-f6dd4cb4d-s5h4z    1/1     Running                      0          18s
+
+$ kubectl get events --field-selector involvedObject.name=revisor-84564b6875-ssrsx,reason=Failed -o custom-columns=MENSAJE:.message | head -2
+MENSAJE
+Error: couldn't find key REVISOR_SERVICIO in ConfigMap default/revisor-config-t6cm6872fk
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-bh266kt42m unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   3/3     3            3           103s
+
+## Ejercicio 2: rotar el token
+
+$ kubectl get secret -o name | grep revisor-token
+secret/revisor-token-bh266kt42m
+
+$ VIEJO="$(cat token.txt)"
+
+$ (umask 077; openssl rand -hex 16 > token.txt)
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-ttgcdb7g7c created
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get secret -o name | grep revisor-token
+secret/revisor-token-bh266kt42m
+secret/revisor-token-ttgcdb7g7c
+
+(con el token VIEJO)
+
+$ kubectl exec depurar -- curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $VIEJO" http://revisor/api/estados
+401
+
+(con el token NUEVO)
+
+$ kubectl exec depurar -- curl -s -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $(cat token.txt)" http://revisor/api/estados
+200
+
+## Ejercicio 3: sin el hash
+
+$ tail -2 $TEMPORAL/sin-hash/kustomization.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+
+$ kubectl kustomize $TEMPORAL/sin-hash | grep -E '^  name: revisor-(config|token)|name: revisor-(config|token)$'
+  name: revisor-config
+  name: revisor-token
+              name: revisor-config
+
+## Ejercicio 3: rotar el token sin el hash (en un espacio de nombres desechable)
+
+$ kubectl create namespace sin-hash
+namespace/sin-hash created
+
+$ kubectl apply -k $TEMPORAL/rotar
+secret/revisor-token created
+
+(token nuevo en la copia)
+
+$ kubectl apply -k $TEMPORAL/rotar
+The Secret "revisor-token" is invalid: data: Forbidden: field is immutable when `immutable` is set
+[código de salida: 1]
+
+$ kubectl delete namespace sin-hash
+namespace "sin-hash" deleted
+
+## Cómo sé que lo logré: el estado final
+
+$ kubectl diff -k . && echo 'sin diferencias con la kustomization'
+sin diferencias con la kustomization
+
+$ kubectl get deployment revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   3/3     3            3           113s
+
+$ kubectl exec deployment/revisor -- /revisor healthcheck
+sano
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l4
+Deleting cluster "curso-k8s-l4" ...
+Deleted nodes: ["curso-k8s-l4-control-plane" "curso-k8s-l4-worker2" "curso-k8s-l4-worker"]
+(borrar tardó 4 s)
+
+$ kind get clusters | grep -c curso-k8s-l4
+0
+(la corrida completa tardó 163 s)
