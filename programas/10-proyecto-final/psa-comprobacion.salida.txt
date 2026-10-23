@@ -1,0 +1,41 @@
+## El control: un espacio con un Pod que viola y otro que cumple
+
+$ kubectl apply -f psa-control.yaml
+namespace/psa-control created
+pod/viola created
+pod/cumple created
+
+$ kubectl get pods -n psa-control
+NAME     READY   STATUS    RESTARTS   AGE
+cumple   1/1     Running   0          1s
+viola    1/1     Running   0          1s
+
+## Se le pone restricted de verdad: el servidor sí avisa, porque el nivel CAMBIA
+
+$ kubectl label --overwrite namespace psa-control pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/enforce-version=v1.37
+Warning: existing pods in namespace "psa-control" violate the new PodSecurity enforce level "restricted:v1.37"
+Warning: viola: allowPrivilegeEscalation != false, unrestricted capabilities, runAsNonRoot != true, seccompProfile
+namespace/psa-control labeled
+
+## La consulta de antes: repetir el nivel que el espacio ya tiene
+
+$ kubectl label --dry-run=server --overwrite namespace psa-control pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/enforce-version=v1.37
+namespace/psa-control not labeled (server dry run)
+
+## La consulta que sí revisa: pedir otra versión de la política
+
+$ kubectl label --dry-run=server --overwrite namespace psa-control pod-security.kubernetes.io/enforce-version=v1.36
+Warning: existing pods in namespace "psa-control" violate the new PodSecurity enforce level "restricted:v1.36"
+Warning: viola: allowPrivilegeEscalation != false, unrestricted capabilities, runAsNonRoot != true, seccompProfile
+namespace/psa-control labeled (server dry run)
+
+## Lo mismo sobre el espacio del proyecto
+
+$ kubectl label --dry-run=server --overwrite namespace revisor pod-security.kubernetes.io/enforce=restricted pod-security.kubernetes.io/enforce-version=v1.37
+namespace/revisor not labeled (server dry run)
+
+$ kubectl label --dry-run=server --overwrite namespace revisor pod-security.kubernetes.io/enforce-version=v1.36
+namespace/revisor labeled (server dry run)
+
+$ kubectl get pods -n revisor --no-headers | wc -l
+       4

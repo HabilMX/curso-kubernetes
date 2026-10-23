@@ -1,0 +1,19 @@
+# fig06_02.solo-salud.yaml — Ejercicio 2: la ruta del revisor, reducida a lo
+# mínimo. Solo deja pasar GET /salud, exacto. Pregunta: ¿qué responde la puerta a
+# /api/estados, con token y sin token? Se deshace con apply -k . (gateway.yaml).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: revisor
+spec:
+  parentRefs:
+  - name: revisor
+  rules:
+  - matches:
+    - path:
+        type: Exact
+        value: /salud
+      method: GET
+    backendRefs:
+    - name: revisor
+      port: 80

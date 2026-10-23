@@ -1,0 +1,414 @@
+# corrida: 2026-10-21 07:45 CST · clúster curso-k8s-l5 · kind v0.33.0 · kubectl v1.37.1
+
+## Punto de partida: el clúster y lo que dejó la Lección 4
+
+$ kind create cluster --name curso-k8s-l5 --config kind-curso.yaml
+(crear el clúster y esperar a que esté listo tardó 34 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l5
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l5-control-plane   Ready    control-plane   29s   v1.37.0
+curso-k8s-l5-worker          Ready    <none>          15s   v1.37.0
+curso-k8s-l5-worker2         Ready    <none>          15s   v1.37.0
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l5
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l5-worker", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l5-control-plane", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l5-worker2", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l5-worker", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l5-control-plane", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l5-worker2", loading...
+
+$ ls -l punto-de-partida/token.txt token.txt | cut -d' ' -f1
+-rw-------
+-rw-------
+
+$ wc -c < punto-de-partida/token.txt
+      33
+
+$ kubectl apply -k punto-de-partida
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-hct4cckkgd created
+service/prueba created
+service/revisor created
+deployment.apps/prueba created
+deployment.apps/revisor created
+
+## 5.1 Lo que el clúster sabe hoy
+
+$ kubectl get pods -l 'app in (revisor,prueba)'
+NAME                      READY   STATUS    RESTARTS   AGE
+prueba-6f4dfdb898-8p5j2   1/1     Running   0          4s
+revisor-f65c6dd96-248bg   1/1     Running   0          4s
+revisor-f65c6dd96-575nn   1/1     Running   0          4s
+revisor-f65c6dd96-pzxpk   1/1     Running   0          4s
+
+$ kubectl describe pod revisor-f65c6dd96-248bg | grep -E '^(Name|QoS Class):|Liveness|Readiness|Startup|Limits|Requests'
+Name:             revisor-f65c6dd96-248bg
+QoS Class:                   BestEffort
+
+$ kubectl get pod revisor-f65c6dd96-248bg -o jsonpath='{.spec.terminationGracePeriodSeconds}{"\n"}'
+30
+
+$ kubectl get pod revisor-f65c6dd96-248bg -o jsonpath='{range .status.conditions[*]}{.type}={.status} {end}{"\n"}'
+PodReadyToStartContainers=True Initialized=True Ready=True ContainersReady=True PodScheduled=True 
+
+## 5.2 Sondas, recursos y plazo de apagado: kubectl apply -k .
+
+$ diff punto-de-partida/token.txt token.txt && echo 'mismo token'
+mismo token
+
+$ kubectl diff -k . | grep -E '^\+ ' | grep -vE 'generation|resourceVersion|uid:|creationTimestamp'
++        livenessProbe:
++          failureThreshold: 3
++          httpGet:
++            path: /modo
++            port: http
++            scheme: HTTP
++          periodSeconds: 10
++          successThreshold: 1
++          timeoutSeconds: 1
++        resources:
++          limits:
++            cpu: 100m
++            memory: 32Mi
++          requests:
++            cpu: 10m
++            memory: 16Mi
++      terminationGracePeriodSeconds: 10
++        livenessProbe:
++          failureThreshold: 3
++          httpGet:
++            path: /salud
++            port: http
++            scheme: HTTP
++          periodSeconds: 10
++          successThreshold: 1
++          timeoutSeconds: 1
++        readinessProbe:
++          failureThreshold: 2
++          httpGet:
++            path: /salud
++            port: http
++            scheme: HTTP
++          periodSeconds: 5
++          successThreshold: 1
++          timeoutSeconds: 1
++        resources:
++          limits:
++            cpu: 200m
++            memory: 64Mi
++          requests:
++            cpu: 50m
++            memory: 32Mi
++        startupProbe:
++          failureThreshold: 10
++          httpGet:
++            path: /salud
++            port: http
++            scheme: HTTP
++          periodSeconds: 1
++          successThreshold: 1
++          timeoutSeconds: 1
++      terminationGracePeriodSeconds: 10
+[código de salida: 1]
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-hct4cckkgd unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba configured
+deployment.apps/revisor configured
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-578c8dc8d9-g9lhl   1/1     Running   0          11s
+revisor-578c8dc8d9-jlh4b   1/1     Running   0          9s
+revisor-578c8dc8d9-xhqt8   1/1     Running   0          12s
+
+$ kubectl describe pod revisor-578c8dc8d9-g9lhl | grep -E '^(Name|QoS Class):|Liveness|Readiness|Startup|Limits|Requests|cpu:|memory:'
+Name:             revisor-578c8dc8d9-g9lhl
+    Limits:
+      cpu:     200m
+      memory:  64Mi
+    Requests:
+      cpu:      50m
+      memory:   32Mi
+    Liveness:   http-get http://:http/salud delay=0s timeout=1s period=10s successThreshold=1 failureThreshold=3
+    Readiness:  http-get http://:http/salud delay=0s timeout=1s period=5s successThreshold=1 failureThreshold=2
+    Startup:    http-get http://:http/salud delay=0s timeout=1s period=1s successThreshold=1 failureThreshold=10
+QoS Class:                   Burstable
+
+$ kubectl get pod revisor-578c8dc8d9-g9lhl -o jsonpath='{.spec.terminationGracePeriodSeconds}{"\n"}'
+10
+
+## 5.4 Las sondas, en la bitácora del revisor
+
+$ kubectl logs --timestamps revisor-578c8dc8d9-g9lhl | head -9 | sed -E 's/^[0-9-]+T([0-9:]+)\.[0-9]+Z/\1/'
+13:45:44 revisor 1.6.0 escuchando en :8080 (1 servicio(s))
+13:45:45 revisor: GET /salud 200 0s
+13:45:45 revisor: GET /salud 200 0s
+13:45:50 revisor: GET /salud 200 0s
+13:45:54 revisor: GET /salud 200 0s
+13:45:55 revisor: GET /salud 200 0s
+13:46:00 revisor: GET /salud 200 0s
+13:46:04 revisor: GET /salud 200 0s
+13:46:05 revisor: GET /salud 200 0s
+
+$ kubectl get pod revisor-578c8dc8d9-g9lhl -o jsonpath='{.status.startTime} {.status.containerStatuses[0].started} {.status.containerStatuses[0].ready}{"\n"}'
+2026-10-21T13:45:43Z true true
+
+## 5.5 /salud no consulta a nadie: prueba caído no reinicia al revisor
+
+$ kubectl apply -f depurar.yaml
+pod/depurar created
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/caido
+modo: caido
+
+$ kubectl get pods -l 'app in (revisor,prueba)'
+NAME                       READY   STATUS    RESTARTS   AGE
+prueba-b896986b5-kzrmk     1/1     Running   0          92s
+revisor-578c8dc8d9-g9lhl   1/1     Running   0          91s
+revisor-578c8dc8d9-jlh4b   1/1     Running   0          89s
+revisor-578c8dc8d9-xhqt8   1/1     Running   0          92s
+
+$ kubectl exec depurar -- curl -s -H 'Authorization: Bearer bc25c09a1d4d939d9ae27a55316b685a' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA        1ms  codigo 503
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/sano
+modo: sano
+
+## 5.6 La capacidad de los nodos
+
+$ kubectl get nodes -o custom-columns='NODO:.metadata.name,CPU:.status.allocatable.cpu,MEMORIA:.status.allocatable.memory'
+NODO                         CPU   MEMORIA
+curso-k8s-l5-control-plane   6     16342676Ki
+curso-k8s-l5-worker          6     16342676Ki
+curso-k8s-l5-worker2         6     16342676Ki
+
+$ kubectl describe node curso-k8s-l5-worker | sed -n '/^Allocated resources:/,/^Events:/p' | head -8
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests   Limits
+  --------           --------   ------
+  cpu                150m (2%)  200m (3%)
+  memory             82Mi (0%)  64Mi (0%)
+  ephemeral-storage  0 (0%)     0 (0%)
+  hugepages-1Gi      0 (0%)     0 (0%)
+
+$ docker exec curso-k8s-l5-worker2 crictl stats --label io.kubernetes.container.name=revisor | sed 's/^.\[2J.\[H//'
+CONTAINER           NAME                CPU %               MEM                 DISK                INODES              SWAP
+060935005135f       revisor             0.02                1.733MB             45.06kB             13                  0B
+1be34aa64c901       revisor             0.03                1.733MB             45.06kB             13                  0B
+
+## El error a propósito: OOMKilled
+
+$ kubectl apply -f memoria.yaml
+pod/memoria created
+
+$ kubectl get pod memoria
+NAME      READY   STATUS      RESTARTS   AGE
+memoria   0/1     OOMKilled   0          20s
+
+$ kubectl get pod memoria -o jsonpath='{.status.containerStatuses[0].state.terminated.reason} {.status.containerStatuses[0].state.terminated.exitCode}{"\n"}'
+OOMKilled 137
+
+$ kubectl logs memoria
+pidiendo 40 MB
+
+$ kubectl describe pod memoria | grep -E '^QoS Class:|Reason:|Exit Code:|Limits:|memory:'
+      Reason:       OOMKilled
+      Exit Code:    137
+    Limits:
+      memory:  16Mi
+      memory:     16Mi
+QoS Class:                    Burstable
+
+$ kubectl delete pod memoria
+pod "memoria" deleted from default namespace
+
+## El error a propósito: Pending
+
+$ kubectl patch deployment revisor --type=json -p '[{"op":"replace","path":"/spec/template/spec/containers/0/resources/requests/cpu","value":"50"},{"op":"replace","path":"/spec/template/spec/containers/0/resources/limits/cpu","value":"50"}]'
+deployment.apps/revisor patched
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-578c8dc8d9-g9lhl   1/1     Running   0          2m3s
+revisor-578c8dc8d9-jlh4b   1/1     Running   0          2m1s
+revisor-578c8dc8d9-xhqt8   1/1     Running   0          2m4s
+revisor-5b8f867ccf-9x42x   0/1     Pending   0          10s
+
+$ kubectl rollout status deployment/revisor --timeout=15s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+error: timed out waiting for the condition
+[código de salida: 1]
+
+$ kubectl describe pod revisor-5b8f867ccf-9x42x | sed -n '/^Events:/,$p'
+Events:
+  Type     Reason            Age   From               Message
+  ----     ------            ----  ----               -------
+  Warning  FailedScheduling  25s   default-scheduler  0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 Insufficient cpu. preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.
+
+$ kubectl exec depurar -- curl -s http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-hct4cckkgd unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-578c8dc8d9-g9lhl   1/1     Running   0          2m19s
+revisor-578c8dc8d9-jlh4b   1/1     Running   0          2m17s
+revisor-578c8dc8d9-xhqt8   1/1     Running   0          2m20s
+
+## 5.7 Apagado ordenado: lo que el revisor escribe al recibir SIGTERM
+
+$ kubectl delete pod revisor-578c8dc8d9-g9lhl
+pod "revisor-578c8dc8d9-g9lhl" deleted from default namespace
+(el borrado tardó 0 s)
+
+$ kubectl logs -f revisor-578c8dc8d9-g9lhl   # lo que se alcanzó a leer, en otra terminal
+revisor: GET /salud 200 0s
+revisor: GET /salud 200 0s
+revisor: recibí terminated, apagando
+revisor: apagado limpio
+
+$ kubectl get pods -l app=revisor
+NAME                       READY   STATUS    RESTARTS   AGE
+revisor-578c8dc8d9-hfjmq   1/1     Running   0          3s
+revisor-578c8dc8d9-jlh4b   1/1     Running   0          2m23s
+revisor-578c8dc8d9-xhqt8   1/1     Running   0          2m26s
+
+## Hábito de seguridad: requests y limits en todo contenedor
+
+$ kubectl get pods -o custom-columns='POD:.metadata.name,QOS:.status.qosClass,CPU_PIDE:.spec.containers[0].resources.requests.cpu,CPU_TOPE:.spec.containers[0].resources.limits.cpu,MEM_PIDE:.spec.containers[0].resources.requests.memory,MEM_TOPE:.spec.containers[0].resources.limits.memory'
+POD                        QOS         CPU_PIDE   CPU_TOPE   MEM_PIDE   MEM_TOPE
+depurar                    Burstable   10m        100m       16Mi       32Mi
+prueba-b896986b5-kzrmk     Burstable   10m        100m       16Mi       32Mi
+revisor-578c8dc8d9-hfjmq   Burstable   50m        200m       32Mi       64Mi
+revisor-578c8dc8d9-jlh4b   Burstable   50m        200m       32Mi       64Mi
+revisor-578c8dc8d9-xhqt8   Burstable   50m        200m       32Mi       64Mi
+
+## Ejercicio 1: una sonda de disponibilidad en prueba
+
+$ kubectl apply -f fig05_01.prueba-disponibilidad.yaml
+deployment.apps/prueba configured
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/caido
+modo: caido
+
+$ kubectl get pods -l app=prueba
+NAME                      READY   STATUS    RESTARTS   AGE
+prueba-6fd58ccd6d-z29zj   0/1     Running   0          19s
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=prueba -o jsonpath='{range .items[0].endpoints[*]}{.addresses[0]} {.targetRef.name} ready={.conditions.ready} serving={.conditions.serving}{"\n"}{end}'
+10.244.2.10 prueba-6fd58ccd6d-z29zj ready=false serving=false
+
+$ kubectl exec depurar -- curl -s -H 'Authorization: Bearer bc25c09a1d4d939d9ae27a55316b685a' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA        1ms  no responde: Get "http://prueba:9000/": dial tcp 10.96.222.53:9000: connect: connection refused
+
+$ kubectl exec depurar -- curl -s -m 3 -X POST http://prueba:9000/modo/sano
+command terminated with exit code 7
+[código de salida: 7]
+
+$ kubectl exec depurar -- curl -s -X POST http://10.244.2.10:9000/modo/sano
+modo: sano
+
+$ kubectl get pods -l app=prueba
+NAME                      READY   STATUS    RESTARTS   AGE
+prueba-6fd58ccd6d-z29zj   1/1     Running   0          23s
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-hct4cckkgd unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba configured
+deployment.apps/revisor unchanged
+
+## Ejercicio 2: una sonda de vida que pregunta lo que no debe
+
+$ kubectl apply -f fig05_02.prueba-vida-mala.yaml
+deployment.apps/prueba configured
+
+$ kubectl exec depurar -- curl -s -X POST http://prueba:9000/modo/caido
+modo: caido
+(el primer reinicio llegó 27 s después de ponerlo en «caido»)
+
+$ kubectl get pods -l app=prueba
+NAME                      READY   STATUS    RESTARTS     AGE
+prueba-7dd568849d-hllzl   1/1     Running   1 (4s ago)   34s
+
+$ kubectl get events --field-selector involvedObject.name=prueba-7dd568849d-hllzl -o custom-columns=RAZON:.reason,MENSAJE:.message | grep -E 'RAZON|Unhealthy|Killing'
+RAZON       MENSAJE
+Unhealthy   Liveness probe failed: HTTP probe failed with statuscode: 503
+Killing     Container prueba failed liveness probe, will be restarted
+
+$ kubectl exec depurar -- curl -s http://prueba:9000/modo
+modo: sano
+
+$ kubectl exec depurar -- curl -s -H 'Authorization: Bearer bc25c09a1d4d939d9ae27a55316b685a' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-hct4cckkgd unchanged
+service/prueba unchanged
+service/revisor unchanged
+deployment.apps/prueba configured
+deployment.apps/revisor unchanged
+
+## Cómo sé que lo logré: el estado final
+
+$ kubectl diff -k . >/dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+
+$ kubectl get pods -l 'app in (revisor,prueba)'
+NAME                       READY   STATUS    RESTARTS   AGE
+prueba-b896986b5-57pgj     1/1     Running   0          5s
+revisor-578c8dc8d9-hfjmq   1/1     Running   0          70s
+revisor-578c8dc8d9-jlh4b   1/1     Running   0          3m30s
+revisor-578c8dc8d9-xhqt8   1/1     Running   0          3m33s
+
+$ kubectl exec depurar -- curl -s -H 'Authorization: Bearer bc25c09a1d4d939d9ae27a55316b685a' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           2ms  200
+
+## Ejercicio 3: cuánto tarda en irse el Pod de depuración
+
+$ kubectl get pod depurar -o jsonpath='{.spec.terminationGracePeriodSeconds}{"\n"}'
+30
+
+$ kubectl exec depurar -- ps
+PID   USER     TIME  COMMAND
+    1 curl_use  0:00 sleep 3600
+  109 curl_use  0:00 ps
+
+$ kubectl delete pod depurar
+pod "depurar" deleted from default namespace
+(el borrado tardó 32 s)
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l5
+Deleting cluster "curso-k8s-l5" ...
+Deleted nodes: ["curso-k8s-l5-worker" "curso-k8s-l5-control-plane" "curso-k8s-l5-worker2"]
+(borrar tardó 1 s)
+
+$ kind get clusters | grep -c curso-k8s-l5
+0
+(la corrida completa tardó 288 s)

@@ -1,0 +1,73 @@
+# corrida: 2026-10-21 17:48 CST · clúster curso-k8s-l9 · red curso-k8s-red-l9 (172.29.0.0/16) · kind v0.33.0 · kubectl v1.37.1
+
+## El clúster, con solo lo que hace falta
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-85f8668b64-2tjx4   1/1     Running   0          6s    10.244.1.2   curso-k8s-l9-worker2   <none>           <none>
+revisor-85f8668b64-mqqjf   1/1     Running   0          6s    10.244.2.4   curso-k8s-l9-worker    <none>           <none>
+
+## Actualizar a una imagen que no existe, con el sondeo corriendo
+
+$ ./sondeo.sh 45 0 4 &   # empieza a las 17:50:47
+(pausa de 3 s: que el sondeo ya esté corriendo)
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:9.9.9
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=40s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+error: timed out waiting for the condition
+[código de salida: 1]
+(espera de 10 s: que el kubelet registre el fallo de descarga)
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS         RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-6586779dc4-96dfn   0/1     ErrImagePull   0          50s   10.244.2.5   curso-k8s-l9-worker    <none>           <none>
+revisor-85f8668b64-2tjx4   1/1     Running        0          60s   10.244.1.2   curso-k8s-l9-worker2   <none>           <none>
+revisor-85f8668b64-mqqjf   1/1     Running        0          60s   10.244.2.4   curso-k8s-l9-worker    <none>           <none>
+
+$ kubectl describe pod revisor-6586779dc4-96dfn -n revisor | sed -n '/Events:/,$p'
+Events:
+  Type     Reason     Age                From               Message
+  ----     ------     ----               ----               -------
+  Normal   Scheduled  50s                default-scheduler  Successfully assigned revisor/revisor-6586779dc4-96dfn to curso-k8s-l9-worker
+  Normal   Pulling    13s (x3 over 50s)  kubelet            spec.containers{revisor}: Pulling image "curso-docker-revisor:9.9.9"
+  Warning  Failed     12s (x3 over 50s)  kubelet            spec.containers{revisor}: Failed to pull image "curso-docker-revisor:9.9.9": failed to pull and unpack image "docker.io/library/curso-docker-revisor:9.9.9": failed to resolve reference "docker.io/library/curso-docker-revisor:9.9.9": pull access denied, repository does not exist or may require authorization: server message: insufficient_scope: authorization failed
+  Warning  Failed     12s (x3 over 50s)  kubelet            spec.containers{revisor}: Error: ErrImagePull
+  Normal   BackOff    2s (x3 over 49s)   kubelet            spec.containers{revisor}: Back-off pulling image "curso-docker-revisor:9.9.9"
+  Warning  Failed     2s (x3 over 49s)   kubelet            spec.containers{revisor}: Error: ImagePullBackOff
+
+$ kubectl get deployment revisor -n revisor
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+revisor   2/2     1            2           60s
+
+# resultado del sondeo (durante toda la actualización rota):
+    811  código 200  curl rc=0  versión 1.6.0
+peticiones=811 fallidas=0
+
+## Volver atrás
+
+$ kubectl rollout undo deployment/revisor -n revisor
+Warning: resource deployments/revisor was previously managed with 'kubectl apply'. Rolling back will not update the kubectl.kubernetes.io/last-applied-configuration annotation, which may cause unexpected behavior on future 'kubectl apply' operations. Consider using 'kubectl apply' with your previous configuration file instead.
+deployment.apps/revisor rolled back
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+deployment "revisor" successfully rolled out
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-85f8668b64-2tjx4   1/1     Running   0          65s   10.244.1.2   curso-k8s-l9-worker2   <none>           <none>
+revisor-85f8668b64-mqqjf   1/1     Running   0          65s   10.244.2.4   curso-k8s-l9-worker    <none>           <none>
+
+$ kubectl get deployment revisor -n revisor -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+curso-docker-revisor:1.6.0
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l9
+Deleting cluster "curso-k8s-l9" ...
+Deleted nodes: ["curso-k8s-l9-control-plane" "curso-k8s-l9-worker2" "curso-k8s-l9-worker"]
+
+$ kind get clusters | grep -c curso-k8s-l9
+0

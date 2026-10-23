@@ -1,0 +1,10 @@
+# plataforma — Lección 10: lo que el clúster necesita ANTES del proyecto:
+# metrics-server (Lección 9), MetalLB y Envoy Gateway (Lección 6). Trae CRD,
+# controladores y webhooks, así que va primero y con server-side apply:
+#   kubectl apply --server-side -k overlays/kind/plataforma
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- metrics-server
+- metallb
+- envoy-gateway

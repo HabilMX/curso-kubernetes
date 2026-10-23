@@ -1,0 +1,928 @@
+# corrida: 2026-10-21 17:19 CST · clúster curso-k8s-l8 · red curso-k8s-red-l8 (172.28.0.0/16 ) · kind v0.33.0 · kubectl v1.37.1
+# disco de Docker: 78% usado
+
+## 8.1 El clúster de la lección
+
+$ KIND_EXPERIMENTAL_DOCKER_NETWORK=curso-k8s-red-l8 kind create cluster --name curso-k8s-l8 --config kind-curso.yaml
+(crear el clúster y esperar a que estuviera listo tardó 42 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l8
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l8-control-plane   Ready    control-plane   27s   v1.37.0
+curso-k8s-l8-worker          Ready    <none>          16s   v1.37.0
+curso-k8s-l8-worker2         Ready    <none>          17s   v1.37.0
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l8
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l8-worker2", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l8-control-plane", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l8-worker", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l8-worker2", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l8-control-plane", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l8-worker", loading...
+
+## 8.1.2 La plataforma de la Lección 6, en tres pasos
+
+$ kubectl apply -k infra/metallb | tail -2
+daemonset.apps/speaker created
+validatingwebhookconfiguration.admissionregistration.k8s.io/metallb-webhook-configuration created
+
+$ kubectl apply --server-side -k infra/envoy-gateway | tail -1
+mutatingwebhookconfiguration.admissionregistration.k8s.io/envoy-gateway-topology-injector.envoy-gateway-system serverside-applied
+
+$ kubectl wait --for=condition=Established crd/ipaddresspools.metallb.io crd/l2advertisements.metallb.io crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+
+$ kubectl wait --for=condition=Available deployment/controller -n metallb-system --timeout=240s
+deployment.apps/controller condition met
+
+$ kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway-system --timeout=300s
+deployment.apps/envoy-gateway condition met
+
+$ sed 's#172.18.255.200-172.18.255.220#172.28.255.200-172.28.255.250#' infra/metallb-pool.yaml | kubectl apply -f - && kubectl apply -f infra/gatewayclass.yaml
+ipaddresspool.metallb.io/curso created
+l2advertisement.metallb.io/curso created
+gatewayclass.gateway.networking.k8s.io/eg created
+
+$ kubectl rollout status daemonset/speaker -n metallb-system --timeout=240s | tail -1
+daemon set "speaker" successfully rolled out
+(la plataforma tardó 175 s)
+
+## 8.1.3 El punto de partida: la Lección 7, en el espacio revisor
+
+$ (umask 077; openssl rand -hex 16 > punto-de-partida/token.txt)
+$ cp punto-de-partida/token.txt token.txt
+
+$ ls -l token.txt punto-de-partida/token.txt | awk '{print $1, $NF}'
+-rw------- punto-de-partida/token.txt
+-rw------- token.txt
+
+$ kubectl apply -k punto-de-partida
+namespace/revisor created
+serviceaccount/observador created
+serviceaccount/prueba created
+serviceaccount/revisor created
+role.rbac.authorization.k8s.io/observador created
+rolebinding.rbac.authorization.k8s.io/observador created
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-hbc69k5m5c created
+service/prueba created
+service/revisor created
+deployment.apps/prueba created
+deployment.apps/revisor created
+gateway.gateway.networking.k8s.io/revisor created
+httproute.gateway.networking.k8s.io/revisor created
+networkpolicy.networking.k8s.io/acceso-revisor-salida created
+networkpolicy.networking.k8s.io/cerrado created
+networkpolicy.networking.k8s.io/dns created
+networkpolicy.networking.k8s.io/prueba-entrada created
+networkpolicy.networking.k8s.io/revisor-entrada created
+networkpolicy.networking.k8s.io/revisor-salida created
+
+$ kubectl wait --for=condition=Programmed gateway/revisor -n revisor --timeout=240s
+gateway.gateway.networking.k8s.io/revisor condition met
+
+$ kubectl apply -n revisor -f depurar.yaml
+pod/depurar created
+
+$ kubectl get pods -n revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+depurar                    1/1     Running   0          8s    10.244.2.5   curso-k8s-l8-worker    <none>           <none>
+prueba-6899c74865-9dckl    1/1     Running   0          52s   10.244.1.4   curso-k8s-l8-worker2   <none>           <none>
+revisor-6b7f4d564d-g6wc5   1/1     Running   0          52s   10.244.2.4   curso-k8s-l8-worker    <none>           <none>
+revisor-6b7f4d564d-rxlw6   1/1     Running   0          52s   10.244.2.3   curso-k8s-l8-worker    <none>           <none>
+revisor-6b7f4d564d-wk56w   1/1     Running   0          52s   10.244.1.5   curso-k8s-l8-worker2   <none>           <none>
+
+$ kubectl get pvc,cronjob,job -n revisor
+No resources found in revisor namespace.
+
+$ curl -s -m 5 http://172.28.255.200/salud   # desde fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+
+## 8.2 Qué se pierde: el emptyDir de hoy
+
+$ kubectl exec -n revisor depurar -- curl -s -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           6ms  200
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,NODO:.spec.nodeName,UID:.metadata.uid
+POD                        NODO                   UID
+revisor-6b7f4d564d-g6wc5   curso-k8s-l8-worker    961791a4-d756-4382-a1de-ae62d7bc11b1
+revisor-6b7f4d564d-rxlw6   curso-k8s-l8-worker    29162810-cd29-4693-89bf-ed789dd8f347
+revisor-6b7f4d564d-wk56w   curso-k8s-l8-worker2   510c7d49-6be3-4fac-947d-18783838b9e5
+
+$ docker exec curso-k8s-l8-worker ls -lan /var/lib/kubelet/pods/961791a4-d756-4382-a1de-ae62d7bc11b1/volumes/kubernetes.io~empty-dir/datos
+total 8
+drwxrwsrwx 2 0 65532 4096 Oct 21 23:23 .
+drwxr-xr-x 3 0     0 4096 Oct 21 23:23 ..
+
+$ docker exec curso-k8s-l8-worker ls -lan /var/lib/kubelet/pods/29162810-cd29-4693-89bf-ed789dd8f347/volumes/kubernetes.io~empty-dir/datos
+total 8
+drwxrwsrwx 2 0 65532 4096 Oct 21 23:23 .
+drwxr-xr-x 3 0     0 4096 Oct 21 23:23 ..
+
+$ docker exec curso-k8s-l8-worker2 ls -lan /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos
+total 12
+drwxrwsrwx 2     0 65532 4096 Oct 21 23:24 .
+drwxr-xr-x 3     0     0 4096 Oct 21 23:23 ..
+-rw------- 1 65532 65532   92 Oct 21 23:24 reporte.json
+
+(el Pod que atendió la petición fue revisor-6b7f4d564d-wk56w, en el nodo curso-k8s-l8-worker2)
+
+$ docker exec curso-k8s-l8-worker2 stat -c '%a %U:%g %n' /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos
+2777 root:65532 /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos
+
+$ docker exec curso-k8s-l8-worker2 cat /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos/reporte.json
+[
+  {
+    "servicio": "prueba",
+    "ok": true,
+    "codigo": 200,
+    "tiempo_ms": 6
+  }
+]
+
+## 8.2.2 Un contenedor que se cae: el emptyDir sobrevive
+
+$ docker exec curso-k8s-l8-worker2 crictl stop a208caab7a28e3a47c90a21f11ccd62ffd1a723a411b85e63427d8d5744f8090
+a208caab7a28e3a47c90a21f11ccd62ffd1a723a411b85e63427d8d5744f8090
+
+(esperando 10 s a que el kubelet reinicie el contenedor)
+
+$ kubectl get pod -n revisor revisor-6b7f4d564d-wk56w
+NAME                       READY   STATUS    RESTARTS      AGE
+revisor-6b7f4d564d-wk56w   1/1     Running   1 (10s ago)   65s
+
+$ kubectl get pod -n revisor revisor-6b7f4d564d-wk56w -o jsonpath='{.status.containerStatuses[0].lastState.terminated.reason} {.status.containerStatuses[0].lastState.terminated.exitCode}{"\n"}'
+Error 137
+
+$ docker exec curso-k8s-l8-worker2 ls -lan /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos
+total 12
+drwxrwsrwx 2     0 65532 4096 Oct 21 23:24 .
+drwxr-xr-x 3     0     0 4096 Oct 21 23:23 ..
+-rw------- 1 65532 65532   92 Oct 21 23:24 reporte.json
+
+## 8.2.3 Un Pod que se borra: el emptyDir se va con él
+
+$ kubectl delete pod -n revisor revisor-6b7f4d564d-wk56w
+pod "revisor-6b7f4d564d-wk56w" deleted from revisor namespace
+
+$ docker exec curso-k8s-l8-worker2 ls /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos
+ls: cannot access '/var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5/volumes/kubernetes.io~empty-dir/datos': No such file or directory
+[código de salida: 2]
+
+$ docker exec curso-k8s-l8-worker2 ls /var/lib/kubelet/pods/510c7d49-6be3-4fac-947d-18783838b9e5
+containers
+etc-hosts
+plugins
+volumes
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,NODO:.spec.nodeName,UID:.metadata.uid,LISTO:.status.containerStatuses[0].ready
+POD                        NODO                   UID                                    LISTO
+revisor-6b7f4d564d-4mnvh   curso-k8s-l8-worker2   d61911b6-d777-4c4c-a159-e2a782fc69d8   true
+revisor-6b7f4d564d-g6wc5   curso-k8s-l8-worker    961791a4-d756-4382-a1de-ae62d7bc11b1   true
+revisor-6b7f4d564d-rxlw6   curso-k8s-l8-worker    29162810-cd29-4693-89bf-ed789dd8f347   true
+
+## 8.3 Volúmenes, solicitudes y clases
+
+$ kubectl api-resources --api-group='' --namespaced=false -o name | grep -E '^(persistentvolumes|nodes|namespaces)$'
+namespaces
+nodes
+persistentvolumes
+
+$ kubectl get storageclass
+NAME                 PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+standard (default)   rancher.io/local-path   Delete          WaitForFirstConsumer   false                  4m31s
+
+$ kubectl get storageclass standard -o jsonpath='{.provisioner} {.reclaimPolicy} {.volumeBindingMode} {.allowVolumeExpansion}{"\n"}'
+rancher.io/local-path Delete WaitForFirstConsumer 
+
+$ kubectl get pods -n local-path-storage
+NAME                                      READY   STATUS    RESTARTS   AGE
+local-path-provisioner-75f7fc7dc5-xl4bd   1/1     Running   0          4m26s
+
+$ kubectl get pv
+No resources found
+
+## 8.4 La solicitud de volumen y su espera
+
+$ kubectl diff -k . | grep -E '^\+ ' | grep -E 'kind: (PersistentVolumeClaim|CronJob|ServiceAccount)|schedule|concurrencyPolicy|storageClassName|storage:'
++  concurrencyPolicy: Forbid
++          schedulerName: default-scheduler
++  schedule: '*/5 * * * *'
++      storage: 100Mi
++  storageClassName: standard
+[código de salida: 1]
+
+$ kubectl apply -k .
+namespace/revisor unchanged
+serviceaccount/observador unchanged
+serviceaccount/prueba unchanged
+serviceaccount/reporte created
+serviceaccount/revisor unchanged
+role.rbac.authorization.k8s.io/observador unchanged
+rolebinding.rbac.authorization.k8s.io/observador unchanged
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-hbc69k5m5c unchanged
+service/prueba unchanged
+service/revisor unchanged
+persistentvolumeclaim/reportes created
+deployment.apps/prueba unchanged
+deployment.apps/revisor unchanged
+cronjob.batch/reporte created
+gateway.gateway.networking.k8s.io/revisor configured
+httproute.gateway.networking.k8s.io/revisor configured
+networkpolicy.networking.k8s.io/acceso-revisor-salida unchanged
+networkpolicy.networking.k8s.io/cerrado unchanged
+networkpolicy.networking.k8s.io/dns unchanged
+networkpolicy.networking.k8s.io/prueba-entrada unchanged
+networkpolicy.networking.k8s.io/revisor-entrada unchanged
+networkpolicy.networking.k8s.io/revisor-salida unchanged
+
+$ kubectl get pvc,cronjob -n revisor
+NAME                             STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/reportes   Pending                                      standard       <unset>                 1s
+
+NAME                    SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+cronjob.batch/reporte   */5 * * * *   <none>     False     0        <none>          0s
+
+$ kubectl describe pvc reportes -n revisor | sed -n '/^Events:/,$p'
+Events:
+  Type    Reason                Age   From                         Message
+  ----    ------                ----  ----                         -------
+  Normal  WaitForFirstConsumer  1s    persistentvolume-controller  waiting for first consumer to be created before binding
+
+$ kubectl get pv
+No resources found
+
+## 8.5 Job: la tarea que termina
+
+$ kubectl apply -f fig08_01.job-salud.yaml
+job.batch/salud created
+
+$ kubectl get job,pods -n revisor -l app=salud
+NAME              STATUS     COMPLETIONS   DURATION   AGE
+job.batch/salud   Complete   1/1           4s         4s
+
+NAME              READY   STATUS      RESTARTS   AGE
+pod/salud-svx9s   0/1     Completed   0          4s
+
+$ kubectl logs -n revisor job/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl get job -n revisor salud -o jsonpath='{range .status.conditions[*]}{.type} {.status}{"\n"}{end}'
+SuccessCriteriaMet True
+Complete True
+
+$ kubectl delete -f fig08_01.job-salud.yaml
+job.batch "salud" deleted from revisor namespace
+
+## 8.5.2 El reporte guardado: la primera tarea
+
+$ kubectl create job -n revisor --from=cronjob/reporte reporte-manual-1
+job.batch/reporte-manual-1 created
+
+$ kubectl get pods -n revisor -l app=reporte -o wide
+NAME                     READY   STATUS    RESTARTS   AGE   IP       NODE     NOMINATED NODE        READINESS GATES
+reporte-manual-1-t7d8l   0/1     Pending   0          3s    <none>   <none>   curso-k8s-l8-worker   <none>
+
+$ kubectl describe pvc reportes -n revisor | sed -n '/^Used By:/,$p'
+Used By:       reporte-manual-1-t7d8l
+Events:
+  Type    Reason                Age              From                                                                                                Message
+  ----    ------                ----             ----                                                                                                -------
+  Normal  WaitForFirstConsumer  7s (x2 over 9s)  persistentvolume-controller                                                                         waiting for first consumer to be created before binding
+  Normal  ExternalProvisioning  3s (x2 over 3s)  persistentvolume-controller                                                                         Waiting for a volume to be created either by the external provisioner 'rancher.io/local-path' or manually by the system administrator. If volume creation is delayed, please verify that the provisioner is running and correctly registered.
+  Normal  Provisioning          3s               rancher.io/local-path_local-path-provisioner-75f7fc7dc5-xl4bd_3605f90f-a3ba-46c3-a75e-a794883e9732  External provisioner is provisioning volume for claim "revisor/reportes"
+
+$ kubectl logs -n revisor job/reporte-manual-1
+total 4
+-rw-r--r--    1 100      101             92 Oct 21 23:24 reporte-20261021T232446Z.json
+
+$ kubectl get pvc -n revisor
+NAME       STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+reportes   Bound    pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804   100Mi      RWO            standard       <unset>                 13s
+
+$ kubectl get pv -o custom-columns=NOMBRE:.metadata.name,CLASE:.spec.storageClassName,NODO:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0],RUTA:.spec.hostPath.path
+NOMBRE                                     CLASE      NODO                  RUTA
+pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804   standard   curso-k8s-l8-worker   /var/local-path-provisioner/pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804_revisor_reportes
+
+$ docker exec curso-k8s-l8-worker stat -c '%a %u:%g %n' /var/local-path-provisioner/pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804_revisor_reportes
+777 0:0 /var/local-path-provisioner/pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804_revisor_reportes
+
+$ docker exec curso-k8s-l8-worker ls -lan /var/local-path-provisioner/pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804_revisor_reportes
+total 12
+drwxrwxrwx 2   0   0 4096 Oct 21 23:24 .
+drwxr-xr-x 3   0   0 4096 Oct 21 23:24 ..
+-rw-r--r-- 1 100 101   92 Oct 21 23:24 reporte-20261021T232446Z.json
+
+## 8.5.3 El Pod de la tarea terminó; el archivo sigue ahí
+
+$ kubectl get pods -n revisor -l app=reporte
+NAME                     READY   STATUS      RESTARTS   AGE
+reporte-manual-1-t7d8l   0/1     Completed   0          7s
+
+$ kubectl create job -n revisor --from=cronjob/reporte reporte-manual-2
+job.batch/reporte-manual-2 created
+
+$ kubectl logs -n revisor job/reporte-manual-2
+total 8
+-rw-r--r--    1 100      101             92 Oct 21 23:24 reporte-20261021T232446Z.json
+-rw-r--r--    1 100      101             92 Oct 21 23:24 reporte-20261021T232451Z.json
+
+$ kubectl get jobs -n revisor
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+reporte-manual-1   Complete   1/1           7s         15s
+reporte-manual-2   Complete   1/1           5s         6s
+
+$ kubectl exec -n revisor depurar -- curl -s -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           6ms  200
+
+$ docker exec curso-k8s-l8-worker sh -c 'cat /var/local-path-provisioner/pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804_revisor_reportes/reporte-*.json | head -9'
+[
+  {
+    "servicio": "prueba",
+    "ok": true,
+    "codigo": 200,
+    "tiempo_ms": 5
+  }
+]
+[
+
+## 8.6 CronJob: la tarea con horario
+
+$ kubectl get cronjob reporte -n revisor -o jsonpath='{.spec.schedule}{" "}{.spec.concurrencyPolicy}{" "}{.spec.successfulJobsHistoryLimit}{" "}{.spec.failedJobsHistoryLimit}{" "}{.spec.timeZone}{"\n"}'
+*/5 * * * * Forbid 3 3 
+
+$ kubectl get cronjob reporte -n revisor -o jsonpath='{.spec.jobTemplate.spec.template.spec.volumes[1].secret.secretName}{"\n"}'
+revisor-token-hbc69k5m5c
+
+$ kubectl get secret -n revisor -o name
+secret/revisor-token-hbc69k5m5c
+
+$ date -u +%H:%M:%S
+23:24:56
+
+$ kubectl get cronjob reporte -n revisor
+NAME      SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+reporte   */5 * * * *   <none>     False     0        <none>          20s
+
+$ kubectl apply -f fig08_03.cron-cada-minuto.yaml
+cronjob.batch/salud-cada-minuto created
+
+(esperando hasta 200 s a que el CronJob cree y termine 2 Job(s) «salud-cada-minuto…»; se mira cada 10 s)
+  +  0 s: 0 Job(s) terminados
+  + 10 s: 1 Job(s) terminados
+  + 20 s: 1 Job(s) terminados
+  + 30 s: 1 Job(s) terminados
+  + 40 s: 1 Job(s) terminados
+  + 50 s: 1 Job(s) terminados
+  + 60 s: 1 Job(s) terminados
+  + 70 s: 2 Job(s) terminados
+
+$ kubectl get cronjob,jobs -n revisor
+NAME                              SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+cronjob.batch/reporte             */5 * * * *   <none>     False     0        67s             91s
+cronjob.batch/salud-cada-minuto   * * * * *     <none>     False     0        7s              71s
+
+NAME                                   STATUS     COMPLETIONS   DURATION   AGE
+job.batch/reporte-29877085             Complete   1/1           4s         67s
+job.batch/reporte-manual-1             Complete   1/1           7s         86s
+job.batch/reporte-manual-2             Complete   1/1           5s         77s
+job.batch/salud-cada-minuto-29877085   Complete   1/1           4s         67s
+job.batch/salud-cada-minuto-29877086   Complete   1/1           3s         7s
+
+$ kubectl logs -n revisor -l app=salud --prefix --tail=3
+[pod/salud-cada-minuto-29877085-lbt8h/salud] 23:25:01
+[pod/salud-cada-minuto-29877085-lbt8h/salud] {"estado":"vivo","version":"1.6.0"}
+[pod/salud-cada-minuto-29877086-j7h2l/salud] 23:26:01
+[pod/salud-cada-minuto-29877086-j7h2l/salud] {"estado":"vivo","version":"1.6.0"}
+
+$ kubectl get job -n revisor -l app=salud -o custom-columns=NOMBRE:.metadata.name,PROGRAMADA:.metadata.annotations.batch\\.kubernetes\\.io/cronjob-scheduled-timestamp
+NOMBRE                       PROGRAMADA
+salud-cada-minuto-29877085   2026-10-21T23:25:00Z
+salud-cada-minuto-29877086   2026-10-21T23:26:00Z
+
+$ kubectl delete -f fig08_03.cron-cada-minuto.yaml
+cronjob.batch "salud-cada-minuto" deleted from revisor namespace
+
+$ kubectl get jobs,pods -n revisor -l app=salud
+No resources found in revisor namespace.
+
+## 8.7 El dueño de los archivos: fsGroup
+
+$ kubectl get pod -n revisor -l app=revisor -o jsonpath='{.items[0].spec.securityContext.fsGroup}{"\n"}'
+65532
+
+$ kubectl get cronjob reporte -n revisor -o jsonpath='{.spec.jobTemplate.spec.template.spec.securityContext}{"\n"}'
+{"fsGroup":101,"runAsGroup":101,"runAsNonRoot":true,"runAsUser":100,"seccompProfile":{"type":"RuntimeDefault"}}
+
+(el directorio de emptyDir de 8.2 y el del volumen de 8.5, uno junto al otro:)
+(emptyDir:  ya no existe, ese Pod se borró)
+(PVC local-path: 777 0:0)
+
+$ docker exec curso-k8s-l8-worker2 stat -c '%a %u:%g %n' /var/lib/kubelet/pods/d61911b6-d777-4c4c-a159-e2a782fc69d8/volumes/kubernetes.io~empty-dir/datos
+2777 0:65532 /var/lib/kubelet/pods/d61911b6-d777-4c4c-a159-e2a782fc69d8/volumes/kubernetes.io~empty-dir/datos
+
+## 8.7.2 Un disco como los de verdad
+
+$ docker exec curso-k8s-l8-worker mkdir -p /mnt/disco-reportes
+
+$ docker exec curso-k8s-l8-worker stat -c '%a %u:%g %n' /mnt/disco-reportes
+755 0:0 /mnt/disco-reportes
+
+$ kubectl apply -f fig08_04.disco-local.yaml
+persistentvolume/disco-reportes created
+persistentvolumeclaim/disco created
+
+$ kubectl get pv,pvc -n revisor
+NAME                                                        CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM              STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+persistentvolume/disco-reportes                             100Mi      RWO            Retain           Bound    revisor/disco      manual         <unset>                          0s
+persistentvolume/pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804   100Mi      RWO            Delete           Bound    revisor/reportes   standard       <unset>                          85s
+
+NAME                             STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/disco      Bound    disco-reportes                             100Mi      RWO            manual         <unset>                 0s
+persistentvolumeclaim/reportes   Bound    pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804   100Mi      RWO            standard       <unset>                 94s
+
+$ kubectl apply -f fig08_05.escritor-sin-fsgroup.yaml
+pod/sin-fsgroup created
+
+$ kubectl get pod -n revisor sin-fsgroup
+NAME          READY   STATUS   RESTARTS   AGE
+sin-fsgroup   0/1     Error    0          4s
+
+$ kubectl logs -n revisor sin-fsgroup
+uid=100(curl_user) gid=101(curl_group) groups=101(curl_group)
+drwxr-xr-x    2 0        0             4096 Oct 21 23:26 /datos
+sh: can't create /datos/a.txt: Permission denied
+
+$ kubectl delete -f fig08_05.escritor-sin-fsgroup.yaml
+pod "sin-fsgroup" deleted from revisor namespace
+
+$ kubectl apply -f fig08_06.escritor-con-fsgroup.yaml
+pod/con-fsgroup created
+
+$ kubectl get pod -n revisor con-fsgroup
+NAME          READY   STATUS      RESTARTS   AGE
+con-fsgroup   0/1     Completed   0          3s
+
+$ kubectl logs -n revisor con-fsgroup
+uid=100(curl_user) gid=101(curl_group) groups=101(curl_group)
+drwxrwsr-x    2 0        101           4096 Oct 21 23:26 /datos
+total 4
+-rw-r--r--    1 100      101              5 Oct 21 23:26 a.txt
+
+$ docker exec curso-k8s-l8-worker stat -c '%a %u:%g %n' /mnt/disco-reportes
+2775 0:101 /mnt/disco-reportes
+
+$ kubectl delete -f fig08_06.escritor-con-fsgroup.yaml
+pod "con-fsgroup" deleted from revisor namespace
+
+$ kubectl delete pvc -n revisor disco
+persistentvolumeclaim "disco" deleted from revisor namespace
+
+$ kubectl get pv
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS     CLAIM              STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+disco-reportes                             100Mi      RWO            Retain           Released   revisor/disco      manual         <unset>                          11s
+pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804   100Mi      RWO            Delete           Bound      revisor/reportes   standard       <unset>                          96s
+
+$ kubectl delete pv disco-reportes
+persistentvolume "disco-reportes" deleted
+
+$ docker exec curso-k8s-l8-worker ls -ln /mnt/disco-reportes
+total 4
+-rw-r--r-- 1 100 101 5 Oct 21 23:26 a.txt
+
+## 8.8 Borrar la solicitud: ahí sí se pierde
+
+$ kubectl get storageclass standard -o jsonpath='{.reclaimPolicy}{"\n"}'
+Delete
+
+$ kubectl delete pvc -n revisor reportes --wait=false
+persistentvolumeclaim "reportes" deleted from revisor namespace
+
+$ kubectl get pvc -n revisor
+NAME       STATUS        VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+reportes   Terminating   pvc-5fcf36b8-f096-44c7-abdb-a86d1e815804   100Mi      RWO            standard       <unset>                 111s
+
+$ kubectl get pvc -n revisor reportes -o jsonpath='{.metadata.finalizers} {.metadata.deletionTimestamp}{"\n"}'
+["kubernetes.io/pvc-protection"] 2026-10-21T23:26:21Z
+
+$ kubectl get pods -n revisor -l app=reporte
+NAME                     READY   STATUS      RESTARTS   AGE
+reporte-29877085-6q87g   0/1     Completed   0          86s
+reporte-manual-1-t7d8l   0/1     Completed   0          105s
+reporte-manual-2-4hmmf   0/1     Completed   0          96s
+
+$ kubectl delete jobs -n revisor --all
+job.batch "reporte-29877085" deleted from revisor namespace
+job.batch "reporte-manual-1" deleted from revisor namespace
+job.batch "reporte-manual-2" deleted from revisor namespace
+
+$ kubectl get pvc,pv
+No resources found
+
+$ docker exec curso-k8s-l8-worker ls -la /var/local-path-provisioner/
+total 8
+drwxr-xr-x  2 root root 4096 Oct 21 23:26 .
+drwxr-xr-x 12 root root 4096 Oct 21 23:24 ..
+
+$ kubectl apply -k . | grep persistentvolumeclaim
+persistentvolumeclaim/reportes created
+
+$ kubectl create job -n revisor --from=cronjob/reporte reporte-manual-3
+job.batch/reporte-manual-3 created
+
+$ kubectl logs -n revisor job/reporte-manual-3
+total 4
+-rw-r--r--    1 100      101             92 Oct 21 23:26 reporte-20261021T232640Z.json
+
+## El error 1: un Job sin la etiqueta de la red
+
+$ kubectl apply -f fig08_02.job-sin-etiqueta.yaml
+job.batch/salud-sin-etiqueta created
+
+(esperando hasta 150 s a que el Job agote sus reintentos; se mira cada 15 s)
+  + 15 s: 1 fallidos,  activos, condiciones: 
+  + 30 s: 2 fallidos,  activos, condiciones: 
+  + 45 s: 2 fallidos, 1 activos, condiciones: 
+  + 60 s: 3 fallidos,  activos, condiciones: FailureTarget=True Failed=True 
+
+$ kubectl get job,pods -n revisor -l app=salud
+NAME                           STATUS   COMPLETIONS   DURATION   AGE
+job.batch/salud-sin-etiqueta   Failed   0/1           61s        61s
+
+NAME                           READY   STATUS   RESTARTS   AGE
+pod/salud-sin-etiqueta-9bnv9   0/1     Error    0          61s
+pod/salud-sin-etiqueta-svs9r   0/1     Error    0          44s
+pod/salud-sin-etiqueta-tr95q   0/1     Error    0          19s
+
+$ kubectl logs -n revisor job/salud-sin-etiqueta
+Found 3 pods, using pod/salud-sin-etiqueta-9bnv9
+curl: (28) Connection timed out after 5000 milliseconds
+
+$ kubectl get pods -n revisor -l app=salud -o custom-columns=POD:.metadata.name,CODIGO:.status.containerStatuses[0].state.terminated.exitCode,RAZON:.status.containerStatuses[0].state.terminated.reason
+POD                        CODIGO   RAZON
+salud-sin-etiqueta-9bnv9   28       Error
+salud-sin-etiqueta-svs9r   28       Error
+salud-sin-etiqueta-tr95q   28       Error
+
+$ kubectl get job -n revisor salud-sin-etiqueta -o jsonpath='{range .status.conditions[*]}{.type} {.status} {.reason}: {.message}{"\n"}{end}'
+FailureTarget True BackoffLimitExceeded: Job has reached the specified backoff limit
+Failed True BackoffLimitExceeded: Job has reached the specified backoff limit
+
+$ kubectl describe job -n revisor salud-sin-etiqueta | sed -n '/^Events:/,$p'
+Events:
+  Type     Reason                Age   From            Message
+  ----     ------                ----  ----            -------
+  Normal   SuccessfulCreate      62s   job-controller  Created pod: salud-sin-etiqueta-9bnv9
+  Normal   SuccessfulCreate      45s   job-controller  Created pod: salud-sin-etiqueta-svs9r
+  Normal   SuccessfulCreate      20s   job-controller  Created pod: salud-sin-etiqueta-tr95q
+  Warning  BackoffLimitExceeded  10s   job-controller  Job has reached the specified backoff limit
+
+$ kubectl get pod depurar -n revisor --show-labels
+NAME      READY   STATUS    RESTARTS   AGE     LABELS
+depurar   1/1     Running   0          3m36s   acceso-revisor=permitido,app=depurar
+
+$ kubectl delete -f fig08_02.job-sin-etiqueta.yaml
+job.batch "salud-sin-etiqueta" deleted from revisor namespace
+
+## Hábito de seguridad: los datos con su dueño
+
+$ kubectl get serviceaccount reporte -n revisor -o jsonpath='{.automountServiceAccountToken}{"\n"}'
+false
+
+$ kubectl get cronjob reporte -n revisor -o jsonpath='{.spec.jobTemplate.spec.template.spec.automountServiceAccountToken}{" "}{.spec.jobTemplate.spec.template.spec.containers[0].env}{"\n"}'
+false 
+
+$ kubectl get pods -n revisor -l app=reporte -o custom-columns=POD:.metadata.name,CUENTA:.spec.serviceAccountName,AUTOMOUNT:.spec.automountServiceAccountToken,VOLUMENES:.spec.volumes[*].name
+POD                      CUENTA    AUTOMOUNT   VOLUMENES
+reporte-manual-3-2657n   reporte   false       datos,token
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/api/estados
+401
+
+## El tamaño pedido: 100Mi contra 150 MB
+
+$ kubectl get pvc reportes -n revisor -o jsonpath='{.spec.resources.requests.storage} {.status.capacity.storage}{"\n"}'
+100Mi 100Mi
+
+$ kubectl apply -f fig08_07.llenar-el-volumen.yaml
+job.batch/llenar created
+
+$ kubectl logs -n revisor job/llenar
+total 146496
+-rw-r--r--    1 100      101      150000000 Oct 21 23:27 grande.bin
+-rw-r--r--    1 100      101             92 Oct 21 23:26 reporte-20261021T232640Z.json
+/dev/root                57.1G     48.4G      8.6G  85% /datos
+
+$ kubectl delete -f fig08_07.llenar-el-volumen.yaml
+job.batch "llenar" deleted from revisor namespace
+
+$ docker exec curso-k8s-l8-worker df -h /var/local-path-provisioner | tail -1
+/dev/root        58G   49G  8.7G  85% /var
+
+## Ejercicio 1: una clase de almacenamiento que no existe
+
+$ kubectl apply -f fig08_08.pvc-clase-inexistente.yaml
+persistentvolumeclaim/rapido created
+pod/lector created
+
+$ kubectl get pvc rapido -n revisor
+NAME     STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+rapido   Pending                                      rapido         <unset>                 12s
+
+$ kubectl get pod lector -n revisor
+NAME     READY   STATUS    RESTARTS   AGE
+lector   0/1     Pending   0          12s
+
+$ kubectl describe pvc rapido -n revisor | sed -n '/^Events:/,$p'
+Events:
+  Type     Reason              Age               From                         Message
+  ----     ------              ----              ----                         -------
+  Warning  ProvisioningFailed  6s (x2 over 12s)  persistentvolume-controller  storageclass.storage.k8s.io "rapido" not found
+
+$ kubectl describe pod lector -n revisor | sed -n '/^Events:/,$p'
+Events:
+  Type     Reason            Age   From               Message
+  ----     ------            ----  ----               -------
+  Warning  FailedScheduling  13s   default-scheduler  0/3 nodes are available: pod has unbound immediate PersistentVolumeClaims. not found
+
+$ kubectl delete -f fig08_08.pvc-clase-inexistente.yaml
+persistentvolumeclaim "rapido" deleted from revisor namespace
+pod "lector" deleted from revisor namespace
+
+## Ejercicio 2: el reporte del revisor, en el PVC
+
+$ kubectl config current-context
+kind-curso-k8s-l8
+
+$ kubectl patch deployment revisor -n revisor --type=json -p '[{"op":"replace","path":"/spec/template/spec/volumes/0","value":{"name":"datos","persistentVolumeClaim":{"claimName":"reportes"}}}]'
+deployment.apps/revisor patched
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP            NODE                  NOMINATED NODE   READINESS GATES
+revisor-6d9bd59b8b-5wnrq   1/1     Running   0          7s    10.244.2.24   curso-k8s-l8-worker   <none>           <none>
+revisor-6d9bd59b8b-sjjkr   1/1     Running   0          10s   10.244.2.23   curso-k8s-l8-worker   <none>           <none>
+revisor-6d9bd59b8b-z7sc9   1/1     Running   0          12s   10.244.2.22   curso-k8s-l8-worker   <none>           <none>
+
+$ kubectl get pv -o custom-columns=NOMBRE:.metadata.name,NODO:.spec.nodeAffinity.required.nodeSelectorTerms[0].matchExpressions[0].values[0]
+NOMBRE                                     NODO
+pvc-54c37c25-a11a-4a37-b2da-ae67d36aea40   curso-k8s-l8-worker
+
+$ kubectl exec -n revisor depurar -- curl -s -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK          11ms  200
+
+$ docker exec curso-k8s-l8-worker ls -lan /var/local-path-provisioner/pvc-54c37c25-a11a-4a37-b2da-ae67d36aea40_revisor_reportes
+total 146508
+drwxrwxrwx 2     0     0      4096 Oct 21 23:28 .
+drwxr-xr-x 3     0     0      4096 Oct 21 23:26 ..
+-rw-r--r-- 1   100   101 150000000 Oct 21 23:27 grande.bin
+-rw-r--r-- 1   100   101        92 Oct 21 23:26 reporte-20261021T232640Z.json
+-rw------- 1 65532 65532        93 Oct 21 23:28 reporte.json
+
+$ kubectl apply -k . | grep -E 'deployment|persistentvolumeclaim'
+persistentvolumeclaim/reportes unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS        RESTARTS   AGE   IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-6b7f4d564d-mgzwr   1/1     Running       0          2s    10.244.1.9    curso-k8s-l8-worker2   <none>           <none>
+revisor-6b7f4d564d-nxzdj   1/1     Running       0          7s    10.244.1.8    curso-k8s-l8-worker2   <none>           <none>
+revisor-6b7f4d564d-tk4tr   1/1     Running       0          5s    10.244.2.25   curso-k8s-l8-worker    <none>           <none>
+revisor-6d9bd59b8b-5wnrq   1/1     Terminating   0          15s   10.244.2.24   curso-k8s-l8-worker    <none>           <none>
+
+## Ejercicio 3: una tarea que tarda más que su horario
+
+$ kubectl apply -f fig08_09.cron-lento.yaml
+cronjob.batch/lento created
+
+(esperando 210 s para ver pasar tres horarios y el final del primer Job; se mira cada 35 s)
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'
+23:29:35
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     0        <none>          35s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'
+23:30:10
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        10s             70s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877090     Running    0/1           10s        10s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'
+23:30:45
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        45s             105s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877090     Running    0/1           45s        45s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'
+23:31:21
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        81s             2m21s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877090     Running    0/1           81s        81s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'
+23:31:56
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        56s             2m56s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877090     Complete   1/1           103s       117s
+lento-29877091     Running    0/1           14s        14s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'
+23:32:32
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        92s             3m32s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877090     Complete   1/1           103s       2m32s
+lento-29877091     Running    0/1           49s        49s
+
+$ kubectl describe cronjob lento -n revisor | sed -n '/^Events:/,$p'
+Events:
+  Type    Reason            Age                From                Message
+  ----    ------            ----               ----                -------
+  Normal  SuccessfulCreate  2m32s              cronjob-controller  Created job lento-29877090
+  Normal  SawCompletedJob   49s                cronjob-controller  Saw completed job: lento-29877090, condition: Complete
+  Normal  SuccessfulCreate  49s                cronjob-controller  Created job lento-29877091
+  Normal  JobAlreadyActive  32s (x4 over 92s)  cronjob-controller  Not starting job because prior execution is running and concurrency policy is Forbid
+
+$ kubectl delete -f fig08_09.cron-lento.yaml
+cronjob.batch "lento" deleted from revisor namespace
+
+## Ejercicio 3, variante: la misma tarea con concurrencyPolicy: Allow
+
+$ sed 's/concurrencyPolicy: Forbid/concurrencyPolicy: Allow/' fig08_09.cron-lento.yaml | kubectl apply -f -
+cronjob.batch/lento created
+
+$ kubectl get cronjob lento -n revisor -o jsonpath='{.spec.concurrencyPolicy}{"\n"}'
+Allow
+
+(esperando 140 s con Allow; se mira cada 35 s)
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:33:35
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     0        <none>          35s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+No resources found in revisor namespace.
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:34:10
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        10s             70s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877094     Running    0/1           10s        10s
+NAME                   READY   STATUS    RESTARTS   AGE
+lento-29877094-mt8vs   1/1     Running   0          11s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:34:46
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        46s             106s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877094     Running    0/1           46s        46s
+NAME                   READY   STATUS    RESTARTS   AGE
+lento-29877094-mt8vs   1/1     Running   0          46s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:35:21
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     2        21s             2m21s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877094     Running    0/1           81s        81s
+lento-29877095     Running    0/1           21s        21s
+NAME                   READY   STATUS    RESTARTS   AGE
+lento-29877094-mt8vs   1/1     Running   0          81s
+lento-29877095-hqn7d   1/1     Running   0          21s
+
+$ kubectl describe cronjob lento -n revisor | sed -n '/^Events:/,$p'
+Events:
+  Type    Reason            Age   From                Message
+  ----    ------            ----  ----                -------
+  Normal  SuccessfulCreate  81s   cronjob-controller  Created job lento-29877094
+  Normal  SuccessfulCreate  21s   cronjob-controller  Created job lento-29877095
+
+$ kubectl delete cronjob lento -n revisor
+cronjob.batch "lento" deleted from revisor namespace
+
+## Ejercicio 3, variante: la misma tarea con concurrencyPolicy: Replace
+
+$ sed 's/concurrencyPolicy: Forbid/concurrencyPolicy: Replace/' fig08_09.cron-lento.yaml | kubectl apply -f -
+cronjob.batch/lento created
+
+$ kubectl get cronjob lento -n revisor -o jsonpath='{.spec.concurrencyPolicy}{"\n"}'
+Replace
+
+(esperando 140 s con Replace; se mira cada 35 s)
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:36:35
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     0        <none>          35s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+No resources found in revisor namespace.
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:37:10
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        10s             70s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877097     Running    0/1           10s        10s
+NAME                   READY   STATUS    RESTARTS   AGE
+lento-29877097-n8cpx   1/1     Running   0          11s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:37:46
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        46s             106s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877097     Running    0/1           46s        46s
+NAME                   READY   STATUS    RESTARTS   AGE
+lento-29877097-n8cpx   1/1     Running   0          46s
+
+$ date -u +%T; kubectl get cronjob lento -n revisor; kubectl get jobs -n revisor | grep -E 'NAME|lento'; kubectl get pods -n revisor -l app=lento
+23:38:21
+NAME    SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+lento   * * * * *   <none>     False     1        21s             2m21s
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+lento-29877098     Running    0/1           21s        21s
+NAME                   READY   STATUS        RESTARTS   AGE
+lento-29877097-n8cpx   1/1     Terminating   0          81s
+lento-29877098-g6cvv   1/1     Running       0          21s
+
+$ kubectl describe cronjob lento -n revisor | sed -n '/^Events:/,$p'
+Events:
+  Type    Reason            Age   From                Message
+  ----    ------            ----  ----                -------
+  Normal  SuccessfulCreate  81s   cronjob-controller  Created job lento-29877097
+  Normal  SuccessfulDelete  21s   cronjob-controller  Deleted job lento-29877097
+  Normal  SuccessfulCreate  21s   cronjob-controller  Created job lento-29877098
+
+$ kubectl delete cronjob lento -n revisor
+cronjob.batch "lento" deleted from revisor namespace
+
+## Lección 0, §0.2.5: las tolerancias que Kubernetes agrega solo
+
+$ kubectl get pod -n revisor -l app=revisor -o jsonpath='{.items[0].spec.tolerations}{"\n"}'
+[{"effect":"NoExecute","key":"node.kubernetes.io/not-ready","operator":"Exists","tolerationSeconds":300},{"effect":"NoExecute","key":"node.kubernetes.io/unreachable","operator":"Exists","tolerationSeconds":300}]
+
+## Cómo sé que lo logré: el estado final
+
+$ kubectl diff -k . >/dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+
+$ kubectl get pvc,cronjob -n revisor
+NAME                             STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/reportes   Bound    pvc-54c37c25-a11a-4a37-b2da-ae67d36aea40   100Mi      RWO            standard       <unset>                 12m
+
+NAME                    SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+cronjob.batch/reporte   */5 * * * *   <none>     False     0        3m53s           14m
+
+$ kubectl get jobs -n revisor
+NAME               STATUS     COMPLETIONS   DURATION   AGE
+reporte-29877090   Complete   1/1           4s         8m53s
+reporte-29877095   Complete   1/1           4s         3m53s
+reporte-manual-3   Complete   1/1           8s         12m
+
+$ kubectl get pods -n revisor
+NAME                       READY   STATUS        RESTARTS   AGE
+depurar                    1/1     Terminating   0          14m
+prueba-6899c74865-9dckl    1/1     Running       0          15m
+reporte-29877090-8ms5h     0/1     Completed     0          8m53s
+reporte-29877095-wbx85     0/1     Completed     0          3m53s
+reporte-manual-3-2657n     0/1     Completed     0          12m
+revisor-6b7f4d564d-mgzwr   1/1     Running       0          10m
+revisor-6b7f4d564d-nxzdj   1/1     Running       0          10m
+revisor-6b7f4d564d-tk4tr   1/1     Running       0          10m
+
+$ curl -s -m 5 http://172.28.255.200/salud   # desde fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l8
+Deleting cluster "curso-k8s-l8" ...
+Deleted nodes: ["curso-k8s-l8-worker2" "curso-k8s-l8-control-plane" "curso-k8s-l8-worker"]
+(borrar tardó 4 s)
+
+$ kind get clusters | grep -c curso-k8s-l8
+0
+
+# disco de Docker: 72% usado
+# la corrida completa tardó 1157 s

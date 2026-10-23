@@ -37,7 +37,7 @@ Numeración única y continua: «Lección N», de la 0 a la 10.
 | 6 | Entrar al clúster | el `revisor` publicado hacia afuera | `LoadBalancer` con MetalLB y Gateway API con Envoy Gateway, instalados dentro del clúster; por qué no Cloud Provider KIND en una máquina compartida (actúa sobre todos los clústeres de kind); `Ingress` como API congelada; por qué no `ingress-nginx`; qué se expone y por dónde |
 | 7 | Aislar: espacios, permisos y red | un espacio de nombres propio con reglas | `Namespace`; Pod Security Admission en nivel `restricted`; `ServiceAccount` y RBAC mínimo con `auth can-i`; `NetworkPolicy` de «todo cerrado» y las aperturas necesarias (si el CNI de kind no la aplica, el curso instala Calico y lo dice) |
 | 8 | Datos y tareas | el reporte guardado y el `revisor` como tarea programada | `PersistentVolumeClaim` y la clase de almacenamiento de kind; `Job` y `CronJob`; el dueño de los archivos con `fsGroup`; qué se pierde al borrar un Pod |
-| 9 | Escalar y actualizar sin cortes | el `revisor` que sube y baja réplicas con la carga | `metrics-server`; `HorizontalPodAutoscaler` y su fórmula; la ventana de bajada; `RollingUpdate`; `PodDisruptionBudget`; `rollout undo` |
+| 9 | Escalar y actualizar, midiendo cada corte | el `revisor` que sube y baja réplicas con la carga | `metrics-server`; `HorizontalPodAutoscaler` y su fórmula; la ventana de bajada; reparto con `topologySpreadConstraints`; `RollingUpdate` y `preStop` medidos con un sondeo; `rollout undo`; `PodDisruptionBudget` y `drain`; la ventana de un nodo caído |
 | 10 | El proyecto terminado y qué cambia en un clúster real | todo con dos `kubectl apply -k` (plataforma y proyecto) y una espera | Kustomize con base y *overlays*; revisión contra el nivel `restricted`; Helm como mención; qué le falta a esto para ser producción |
 
 Lo que la tabla promete por lección es lo que la lección trae.
@@ -57,7 +57,7 @@ Lo que la tabla promete por lección es lo que la lección trae.
 | 6 | se expone lo mínimo, por una puerta nombrada, y se dice qué falta (cifrado en tránsito) |
 | 7 | espacio propio, nivel `restricted`, permisos mínimos, red cerrada por defecto |
 | 8 | el `ServiceAccount` sin credenciales montadas si no las necesita; los datos con su dueño |
-| 9 | límites al escalado; las actualizaciones no tumban el servicio |
+| 9 | límites al escalado; las actualizaciones mantienen el servicio arriba, con las pocas fallas medidas y explicadas |
 | 10 | revisión final contra el nivel `restricted` y lista de lo que un clúster real exige |
 
 **Solo se enseña lo vigente, y lo que se retiró se nombra para reconocerlo.** `ingress-nginx` dejó de recibir mantenimiento en marzo de 2026 y los tutoriales de hace dos años todavía lo enseñan; `Ingress` es una API congelada y Gateway API es su sucesora. El curso dice cuál es cuál. Y cada versión se da con su fecha: las de este curso se midieron el 7 de octubre de 2026 (Kubernetes 1.37.1; kind v0.33.0, cuyo nodo por defecto es 1.37.0). Lo que depende de una pieza externa (MetalLB, Envoy Gateway, la aplicación de `NetworkPolicy`, `metrics-server` en kind) se verifica en vivo al escribir cada lección y no se afirma antes.

@@ -1,0 +1,85 @@
+# reporte.yaml — Lección 8: el reporte guardado y el revisor como tarea programada.
+# Cada 5 minutos, un Job le pide al revisor su reporte y lo guarda en un volumen
+# persistente. El binario del revisor solo sirve HTTP (no tiene modo «una vez»),
+# por eso la tarea es un curl contra su API.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reporte
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: reportes
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 100Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: reporte
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 60
+      template:
+        metadata:
+          labels:
+            app: reporte
+            # la red (red.yaml) deja a estos Pods hablar con el revisor:8080
+            acceso-revisor: permitido
+        spec:
+          serviceAccountName: reporte
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            fsGroup: 101
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: reporte
+            image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+            command:
+            - sh
+            - -c
+            - >-
+              curl -fsS -m 20
+              -H "Authorization: Bearer $(cat /secretos/token)"
+              -o /datos/reporte-$(date -u +%Y%m%dT%H%M%SZ).json
+              http://revisor/api/estados
+              && ls -ln /datos
+            resources:
+              requests: {cpu: 10m, memory: 16Mi}
+              limits: {cpu: 100m, memory: 32Mi}
+            volumeMounts:
+            - name: datos
+              mountPath: /datos
+            - name: token
+              mountPath: /secretos
+              readOnly: true
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]
+          volumes:
+          - name: datos
+            persistentVolumeClaim:
+              claimName: reportes
+          - name: token
+            secret:
+              secretName: revisor-token
+              defaultMode: 0440

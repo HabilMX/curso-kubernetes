@@ -1,0 +1,15 @@
+# overlays/kind — Lección 10: el proyecto completo para un clúster de kind que ya
+# tiene su plataforma (ver plataforma/). Dos comandos y una espera, en este orden:
+#
+#   kubectl apply --server-side -k overlays/kind/plataforma
+#   (esperar a que MetalLB, Envoy Gateway y metrics-server estén listos)
+#   kubectl apply --server-side -k overlays/kind
+#
+# No lleva «namespace:» a propósito: la base ya pone todo en «revisor», y el rango
+# de MetalLB y la GatewayClass viven fuera de ese espacio.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../base
+- metallb-pool.yaml
+- gatewayclass.yaml

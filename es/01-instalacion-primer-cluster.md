@@ -2,7 +2,7 @@
 
 Martes, 8:20 de la mañana. A las diez tienes que enseñar el `revisor` corriendo en un clúster, y tu laptop no tiene ni `kubectl`. Buscas «instalar kind» y el primer blog te da dos líneas: un `curl` a una dirección que termina en `latest` y un `sudo mv`. Las copias. Un compañero te pasa por chat «el kubectl que me funciona a mí», un archivo sin versión ni origen. Lo usas también. A las 8:50, `kind create cluster` imprime una columna de palomitas verdes, incluida `✓ Joining worker nodes`. Respiras. A las 9:30, el primer Deployment se queda a medias y descubres que tu clúster de tres nodos tiene uno solo. No sabes qué versión de cada herramienta tienes, ni de dónde salió el binario del chat, ni por qué dos nodos que «se unieron» no existen. Y faltan treinta minutos.
 
-Nada de eso fue mala suerte. Fueron tres decisiones que nadie tomó: qué versión instalar, cómo saber que el binario es el que dice ser y qué límite del sistema hay que subir antes de crear el clúster. Esta lección las toma por ti, una por una, y te deja un clúster que sabes crear, mirar, borrar y volver a crear en menos de medio minuto.
+Nada de eso fue mala suerte. Fueron tres decisiones que nadie tomó: qué versión instalar, cómo saber que el binario es el que dice ser y qué límite del sistema hay que subir antes de crear el clúster. Esta lección las toma por ti, una por una, y te deja un clúster que sabes crear, mirar, borrar y volver a crear en menos de medio minuto, una vez que la imagen del nodo ya está en tu disco (la primera vez hay que descargarla, y eso depende de tu conexión).
 
 **Tiempo:** 90 min
 
@@ -110,7 +110,7 @@ Una suma `sha256` es un número de 256 bits, que se escribe con 64 caracteres he
 
 El proyecto publica, junto a cada binario, su suma. Tú bajas los dos, calculas la suma del binario que te llegó y la comparas con la publicada. Si coinciden, el archivo que tienes es, byte por byte, el que el proyecto publicó con esa suma. Si no, algo cambió en el camino: una descarga cortada, un espejo desactualizado, un archivo de otra versión o uno alterado. En cualquiera de esos casos **no se instala**.
 
-Hay que ser honesto con lo que la suma no demuestra. El binario y su suma salen del mismo sitio. Si alguien controlara `dl.k8s.io` y cambiara los dos, coincidirían. La suma te protege de todo lo que pasa **entre** el sitio oficial y tu disco, y de mezclar versiones sin darte cuenta. No te protege de un binario que venga de un sitio que no es el oficial: el «`kubectl` que me funciona a mí» que llega por chat no trae suma, o trae una que no puedes contrastar con nada. Por eso el origen importa tanto como la suma.
+Hay que ser honesto con lo que la suma no demuestra. El binario y su suma salen del mismo sitio. Si alguien controlara `dl.k8s.io` y cambiara los dos, coincidirían. La suma te protege de las corrupciones y de las descargas cortadas **entre** el sitio oficial y tu disco, y de mezclar versiones o archivos sin darte cuenta: si lo que quedó en tu disco coincide con la suma, es lo que el sitio publicó. No te protege de un binario que venga de un sitio que no es el oficial: el «`kubectl` que me funciona a mí» que llega por chat no trae suma, o trae una que no puedes contrastar con nada. Por eso el origen importa tanto como la suma.
 
 #### 1.3.2 El programa que descarga y comprueba
 
@@ -167,7 +167,7 @@ paso wc -c kubectl "kind-linux-$ARQ"
 
 Tres detalles, de arriba abajo:
 
-- **`set -euo pipefail`** hace que el guion se detenga en el primer comando que falle. Si la suma no coincide, `sha256sum` sale con código 1 y el guion se para ahí, antes del `ls`.
+- **`set -euo pipefail`** hace que el guion se detenga en el primer comando que falle. Si la suma no coincide, `sha256sum` sale con código 1 y el guion se para ahí, antes de descargar `kind` y antes del `wc -c` final.
 - **`curl -fsSL`**: `-f` hace que un error del servidor (un 404 porque escribiste mal la versión) sea un fallo y no un archivo de error guardado con el nombre del binario. `-L` sigue las redirecciones, que GitHub usa en todas sus descargas. `-sS` calla la barra de progreso pero deja ver los errores.
 - **Dos formatos de suma.** El `kubectl.sha256` del proyecto Kubernetes trae solo los 64 caracteres. Por eso la guía oficial arma la línea «suma, dos espacios, nombre» con `echo` y se la pasa a `sha256sum --check`. El `.sha256sum` de kind ya trae la línea completa, y `sha256sum --check` lo lee directo.
 
@@ -197,6 +197,11 @@ aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d  kind-linux-amd
 
 $ sha256sum --check kind-linux-amd64.sha256sum
 kind-linux-amd64: OK
+
+$ wc -c kubectl kind-linux-amd64
+ 61886626 kubectl
+ 10530942 kind-linux-amd64
+ 72417568 total
 ```
 
 Lo que importa son los dos `OK`. Anota también las dos sumas: si dentro de un mes bajas otra vez los mismos binarios con las mismas versiones, deben salir **exactamente** estas. Si salen otras, no es la misma versión o no es el mismo archivo. El `wc -c` del final dijo que `kubectl` pesa 61,886,626 bytes y `kind` 10,530,942.
@@ -577,6 +582,8 @@ Y cada nodo lleva su `image` **con huella**. Es el mismo hábito que la suma de 
 
 El nombre del clúster no va en el archivo, va en la orden: `--name curso-k8s-l1`. Así el mismo archivo sirve para crear clústeres con otros nombres.
 
+La orden busca `kind-curso.yaml` por la ruta que le des. Los comandos de esta lección dan por hecho que estás dentro de `programas/01-instalacion-primer-cluster/`, donde vive el archivo. Si copias el archivo a otra carpeta, corre la orden desde ahí o escribe la ruta completa en `--config`.
+
 ### 1.6 Crear el clúster
 
 #### 1.6.1 Un `kubeconfig` propio para el curso
@@ -595,8 +602,15 @@ Lo que **no** se va al cerrar la terminal: el clúster, que sigue corriendo, y l
 
 ```bash
 kind delete cluster --name curso-k8s-l1
-rm -r -- "$(dirname "$KUBECONFIG")"
+# La carpeta temporal del kubeconfig, y SOLO si es la que creó mktemp arriba.
+case "$KUBECONFIG" in
+  /tmp/curso-k8s-l1.*/kubeconfig) rm -r -- "$(dirname "$KUBECONFIG")" ;;
+  *) echo "No borro nada: KUBECONFIG es «$KUBECONFIG», no la carpeta de la lección." ;;
+esac
+unset KUBECONFIG
 ```
+
+El `case` solo deja pasar una ruta con la forma exacta de la que creó `mktemp`; si tu `KUBECONFIG` apunta a otra parte, por ejemplo a tu `~/.kube/config` porque abriste otra terminal y no repetiste el `export`, no borra nada y te dice por qué, en lugar de llevarse tu carpeta `~/.kube` entera.
 
 Si ya cerraste, `kind get clusters` te dice qué quedó vivo, y `ls -d /tmp/curso-k8s-l1.*` qué carpetas quedaron. El guion de la lección, `correr.sh`, hace todo esto solo: crea su carpeta temporal y, al salir, borra el clúster y la carpeta.
 
@@ -745,7 +759,7 @@ Cuatro cosas que leer:
 
 - **El nombre del contexto es `kind-` más el nombre del clúster.** kind siempre los nombra así: el clúster `curso-k8s-l1` da el contexto `kind-curso-k8s-l1`, y el clúster por omisión `kind` da `kind-kind`. El clúster y el usuario del `kubeconfig` llevan el mismo nombre.
 - **`get-contexts`** es la tabla corta. El asterisco de `CURRENT` marca el activo. `AUTHINFO` es el usuario. `NAMESPACE` vacío quiere decir `default`.
-- **`view --minify`** muestra solo lo que usa el contexto activo. La dirección del servidor es `https://127.0.0.1:54589`: el puerto alto que Docker publicó en tu máquina para el `kube-apiserver` del nodo de control, siempre en `127.0.0.1`. Los tres campos `DATA+OMITTED` son el certificado del servidor y **la credencial de administrador**. `kubectl` los oculta porque son secretos. Están completos en el archivo.
+- **`view --minify`** muestra solo lo que usa el contexto activo. La dirección del servidor es `https://127.0.0.1:54589`: el puerto alto que Docker publicó en tu máquina para el `kube-apiserver` del nodo de control, en `127.0.0.1` por omisión. kind permite cambiar esa dirección con `networking.apiServerAddress`, pero su documentación desaconseja exponerlo a algo que no sea la interfaz local, y este curso no lo cambia. Los tres campos `DATA+OMITTED` son el certificado del servidor y **la credencial de administrador**. `kubectl` los oculta porque son secretos. Están completos en el archivo.
 - **`stat -c %A`** da los permisos del archivo: `-rw-------`, solo tu usuario puede leerlo. kind lo crea así porque contiene esa credencial. Si alguna vez copias un `kubeconfig` a otro lado, conserva esos permisos. (En tu Mint, `ls -l "$KUBECONFIG"` dice lo mismo, junto con tu nombre de usuario.)
 
 La documentación agrega una advertencia que vale para siempre: «usa solo archivos `kubeconfig` de fuentes confiables. Un archivo `kubeconfig` hecho a propósito podría provocar la ejecución de código malicioso o exponer archivos. Si tienes que usar uno que no es de confianza, revísalo con cuidado antes, como revisarías un guion de *shell*». Un `kubeconfig` puede pedir que se ejecute un programa para obtener la credencial: por eso se lee antes de usarlo.
@@ -795,6 +809,8 @@ E1021 07:11:02.010566   96846 memcache.go:381] "Couldn't get current server API 
 The connection to the server 127.0.0.1:1 was refused - did you specify the right host or port?
 [código de salida: 1]
 ```
+
+Los renglones que empiezan con `E1021 … memcache.go:381` los escribe el propio cliente de `kubectl`, no el clúster: la `E` es el nivel de error, `1021` el mes y el día, y `memcache.go` es el código con el que `kubectl` guarda en memoria la lista de recursos que ofrece un servidor. Antes de ejecutar tu comando, `kubectl` le pregunta al servidor qué recursos tiene, y aquí esa pregunta falló cinco veces porque no había nadie escuchando. Es ruido repetido, y lo que importa es el último renglón.
 
 Aquí hubo suerte, porque `otro` no existe y el error es ruidoso. Lee el último renglón: dice **a qué servidor** intentó hablarle, `127.0.0.1:1`, y no es el de tu clúster, que estaba en `127.0.0.1:54589`. Si `otro` fuera un clúster de verdad, la respuesta habría sido una lista de nodos ajenos, sin un solo error. El ejercicio de leer **a quién** le hablaste es el mismo en los dos casos.
 

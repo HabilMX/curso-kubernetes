@@ -1,0 +1,32 @@
+# kustomization.yaml — Lecciones 4 a 9. Se aplica con: kubectl apply -k .
+# El token NO se versiona: token.txt lo genera correr.sh (openssl rand -hex 16)
+# y está en .gitignore. Los generadores agregan un hash al nombre: si cambia el
+# contenido, cambia el nombre, y eso dispara el rollout del Deployment.
+# Requiere la infraestructura de la Lección 6 (MetalLB y Envoy Gateway) ya
+# instalada: sin sus CRD, Gateway y HTTPRoute no existen.
+# revisor-publico.yaml (el LoadBalancer directo de la 6) ya no está: desde la
+# Lección 7 la única puerta es el Gateway.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: revisor
+resources:
+- namespace.yaml
+- cuentas.yaml
+- red.yaml
+- revisor-deployment.yaml
+- revisor-service.yaml
+- prueba-deployment.yaml
+- prueba-service.yaml
+- gateway.yaml
+- reporte.yaml
+- escalado.yaml
+configMapGenerator:
+- name: revisor-config
+  literals:
+  - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s
+secretGenerator:
+- name: revisor-token
+  files:
+  - token=token.txt
+  options:
+    immutable: true

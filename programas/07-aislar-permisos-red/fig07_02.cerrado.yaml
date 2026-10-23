@@ -1,0 +1,11 @@
+# fig07_02.cerrado.yaml — la primera regla de red.yaml, sola: cierra la entrada
+# y la salida de TODOS los Pods del espacio donde se aplica, sin ninguna apertura.
+# Se aplica con -n revisor para ver qué se rompe (hasta el DNS), y después se
+# completa con red.yaml. No forma parte de la kustomization.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cerrado
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]

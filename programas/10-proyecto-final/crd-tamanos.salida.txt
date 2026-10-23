@@ -1,0 +1,9 @@
+CRD en la plataforma: 30
+   BYTES  CRD
+  648954  envoyproxies.gateway.envoyproxy.io   <- pasa de 262144
+  298611  httproutes.gateway.networking.k8s.io   <- pasa de 262144
+  274445  securitypolicies.gateway.envoyproxy.io   <- pasa de 262144
+  127609  backendtrafficpolicies.gateway.envoyproxy.io
+  121368  gateways.gateway.networking.k8s.io
+   93262  envoyextensionpolicies.gateway.envoyproxy.io
+pasan del límite: 3

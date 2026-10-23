@@ -47,7 +47,7 @@ _date :_
 - Ce qui s'est passé avec les Pods quand j'ai changé le `ConfigMap` par variable et quand je l'ai changé par fichier :
 - Avec Kustomize, combien de temps a pris le rollout :
 
-## Leçon 5 — Contrôles de santé, ressources et arrêt propre
+## Leçon 5 — Contrôles de santé, ressources et arrêt ordonné
 
 _date :_
 
@@ -77,7 +77,7 @@ _date :_
 - Ce qui s'est perdu et ce qui ne s'est pas perdu en supprimant le Pod avec et sans volume :
 - Combien de fois mon `CronJob` s'est exécuté et comment je l'ai vérifié :
 
-## Leçon 9 — Mettre à l'échelle et mettre à jour sans coupure
+## Leçon 9 — Mettre à l'échelle et mettre à jour en mesurant chaque coupure
 
 _date :_
 

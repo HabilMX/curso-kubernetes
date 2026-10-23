@@ -1,0 +1,35 @@
+# kustomization.yaml — Lección 10: la BASE del proyecto. No se aplica sola: la
+# aplica un overlay (overlays/kind). Una base no sabe que existen sus overlays.
+#
+# El token NO se versiona: token.txt lo genera quien levanta el proyecto
+# ((umask 077; openssl rand -hex 16 > base/token.txt)) y está en .gitignore. Los
+# generadores agregan un hash al nombre: si cambia el contenido, cambia el
+# nombre, y eso dispara el rollout del Deployment.
+#
+# Esta base necesita que la PLATAFORMA (MetalLB, Envoy Gateway y metrics-server)
+# ya esté instalada y lista: sin sus tipos nuevos (CRD), Gateway y HTTPRoute no
+# existen. Por eso el overlay se aplica DESPUÉS de overlays/kind/plataforma.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: revisor
+resources:
+- namespace.yaml
+- cuentas.yaml
+- red.yaml
+- revisor-deployment.yaml
+- revisor-service.yaml
+- prueba-deployment.yaml
+- prueba-service.yaml
+- gateway.yaml
+- reporte.yaml
+- escalado.yaml
+configMapGenerator:
+- name: revisor-config
+  literals:
+  - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s
+secretGenerator:
+- name: revisor-token
+  files:
+  - token=token.txt
+  options:
+    immutable: true

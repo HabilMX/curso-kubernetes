@@ -1,0 +1,30 @@
+# gateway.yaml — Lección 6: Gateway API, la sucesora de Ingress.
+# La puerta (Gateway «revisor», clase «eg» de Envoy Gateway) recibe una IP de
+# MetalLB; la ruta (HTTPRoute) manda todo al Service revisor. Solo HTTP: el
+# cifrado en tránsito es lo que la lección dice que falta.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: revisor
+spec:
+  gatewayClassName: eg
+  listeners:
+  - name: http
+    protocol: HTTP
+    port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: revisor
+spec:
+  parentRefs:
+  - name: revisor
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: revisor
+      port: 80

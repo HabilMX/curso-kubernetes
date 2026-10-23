@@ -1,0 +1,80 @@
+# revisor-deployment.yaml — Lección 5: sondas, recursos y apagado ordenado.
+# /salud no consulta a nadie: si dependiera de «prueba», una caída de prueba
+# reiniciaría el revisor, que no tiene la culpa.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: revisor
+  template:
+    metadata:
+      labels:
+        app: revisor
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: revisor
+        image: curso-docker-revisor:1.6.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: REVISOR_SERVICIOS
+          valueFrom:
+            configMapKeyRef:
+              name: revisor-config
+              key: REVISOR_SERVICIOS
+        - name: REVISOR_TOKEN_ARCHIVO
+          value: /secretos/token
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 64Mi
+        startupProbe:
+          httpGet: {path: /salud, port: http}
+          periodSeconds: 1
+          failureThreshold: 10
+        readinessProbe:
+          httpGet: {path: /salud, port: http}
+          periodSeconds: 5
+          failureThreshold: 2
+        livenessProbe:
+          httpGet: {path: /salud, port: http}
+          periodSeconds: 10
+          failureThreshold: 3
+        volumeMounts:
+        - name: datos
+          mountPath: /datos
+        - name: token
+          mountPath: /secretos
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      volumes:
+      - name: datos
+        emptyDir:
+          sizeLimit: 10Mi
+      - name: token
+        secret:
+          secretName: revisor-token
+          defaultMode: 0440

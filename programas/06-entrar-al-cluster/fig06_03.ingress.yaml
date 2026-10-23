@@ -1,0 +1,18 @@
+# fig06_03.ingress.yaml — Ejercicio 3: un Ingress, la API congelada. El clúster
+# lo acepta (la API existe desde siempre), pero en este clúster no hay ningún
+# controlador de Ingress. Pregunta: ¿qué dirección recibe? ¿Quién la atiende?
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: revisor
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: revisor
+            port:
+              name: http

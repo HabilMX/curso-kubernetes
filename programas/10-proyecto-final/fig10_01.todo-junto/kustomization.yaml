@@ -1,0 +1,10 @@
+# fig10_01.todo-junto/kustomization.yaml — FALLA A PROPÓSITO (o funciona a medias):
+# junta la plataforma y el proyecto en UN solo «kubectl apply». Las dos mitades
+# no tienen orden de espera entre sí: el proyecto pide tipos (IPAddressPool,
+# GatewayClass, Gateway, HTTPRoute) que la plataforma todavía no ha registrado.
+# Se aplica con:  kubectl apply --server-side -k fig10_01.todo-junto
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../overlays/kind/plataforma
+- ../overlays/kind

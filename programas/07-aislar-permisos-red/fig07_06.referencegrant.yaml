@@ -1,0 +1,17 @@
+# fig07_06.referencegrant.yaml — Ejercicio 3: el permiso que da el DUEÑO del Service.
+# Vive en el espacio «revisor» (el del Service destino) y dice: las HTTPRoute del
+# espacio «default» pueden usar como destino los Service de este espacio.
+# Se aplica con: kubectl apply -n revisor -f fig07_06.referencegrant.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: ReferenceGrant
+metadata:
+  name: rutas-de-default
+spec:
+  from:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: default
+  to:
+  - group: ""
+    kind: Service
+    name: revisor

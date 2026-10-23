@@ -1,6 +1,6 @@
 # Leçon 0 — Ce qu'est Kubernetes et ce que kind n'est PAS
 
-Vendredi, 23 h 40. Le `revisor` tourne depuis trois semaines sur un seul serveur, lancé avec un `docker run --restart always` que quelqu'un a tapé un après-midi sans jamais l'écrire nulle part. À cette heure-là, le serveur s'éteint : une alimentation qui rend l'âme. Le conteneur meurt avec lui, et avec lui meurt le *daemon* de Docker, le seul qui savait le redémarrer. Le lundi à neuf heures, l'équipe d'exploitation a besoin du rapport d'état pour la réunion hebdomadaire et la page est blanche. Quelqu'un doit se réveiller, trouver une autre machine, se souvenir des variables d'environnement exactes, du port, du volume, de la version de l'image… et tout cela se trouvait dans l'historique du terminal du serveur qui ne s'allume plus.
+Vendredi, 23 h 40. Le `revisor` tourne depuis trois semaines sur un seul serveur, lancé avec un `docker run --restart always` que quelqu'un a tapé un après-midi sans jamais l'écrire nulle part. À cette heure-là, le serveur s'arrête : une alimentation qui rend l'âme. Le conteneur meurt avec lui, et avec lui meurt le *daemon* de Docker, le seul qui savait le redémarrer. Le lundi à neuf heures, l'équipe d'exploitation a besoin du rapport d'état pour la réunion hebdomadaire et la page est blanche. Quelqu'un doit se réveiller, trouver une autre machine, se souvenir des variables d'environnement exactes, du port, du volume, de la version de l'image… et tout cela se trouvait dans l'historique du terminal du serveur qui ne démarre plus.
 
 Le problème n'était pas le conteneur. C'était que **personne, sauf quelqu'un qui dormait, ne savait dans quel état devait être le service**. Cette leçon porte sur l'outil qui existe pour que ce soit le système qui le sache, et pas toi à trois heures du matin.
 
@@ -70,7 +70,7 @@ Un conteneur est un processus avec son propre système de fichiers et son propre
 - Que, si une copie meurt, **quelqu'un la remplace** sans attendre une personne.
 - Que les autres programmes le **trouvent par son nom**, même si ses copies changent de machine et d'adresse.
 - Que sa configuration puisse **changer sans reconstruire** l'image.
-- Qu'une nouvelle version **remplace l'ancienne sans couper** le service.
+- Qu'une nouvelle version **remplace l'ancienne sans couper** le service. Kubernetes fournit le mécanisme (changer les copies petit à petit) ; qu'il n'y ait vraiment aucune coupure dépend aussi de ce que l'application signale quand elle est prête et s'arrête proprement (Leçons 5 et 9).
 
 Avec Docker et Compose, tu peux résoudre certaines de ces choses sur une seule machine. Aucune sur plusieurs. Kubernetes est l'outil qui résout les six, sur un groupe de machines qu'il appelle **cluster**.
 
@@ -88,7 +88,7 @@ Cette dernière phrase est le résumé de cette leçon. La suite la démonte pi�
 
 #### 0.2.1 Le thermostat
 
-La documentation de Kubernetes explique son idée centrale à l'aide d'un appareil que tu connais : un thermostat ([kubernetes.io, « Controllers »](https://kubernetes.io/docs/concepts/architecture/controller/)). Quand tu règles la température sur 22 degrés, tu indiques au thermostat ton **état souhaité**. La température qu'il fait dans la pièce est l'**état actuel**. Le thermostat allume ou éteint le chauffage ou la climatisation pour rapprocher l'état actuel de l'état souhaité. Tu ne lui dis pas « allume le chauffage dix minutes » ; tu lui dis « je veux 22 », et il décide quoi faire, encore et encore, tant qu'il est allumé.
+La documentation de Kubernetes explique son idée centrale à l'aide d'un appareil que tu connais : un thermostat ([kubernetes.io, « Controllers »](https://kubernetes.io/docs/concepts/architecture/controller/)). Quand tu règles la température sur 22 degrés, tu indiques au thermostat ton **état souhaité**. La température qu'il fait dans la pièce est l'**état actuel**. Le thermostat met en marche ou arrête le chauffage ou la climatisation pour rapprocher l'état actuel de l'état souhaité. Tu ne lui dis pas « mets le chauffage en marche dix minutes » ; tu lui dis « je veux 22 », et il décide quoi faire, encore et encore, tant qu'il est en marche.
 
 C'est une **boucle de contrôle** : un cycle sans fin, qui observe, compare et corrige. Dans Kubernetes, chacune de ces boucles s'appelle un **contrôleur** : « les contrôleurs sont des boucles de contrôle qui surveillent l'état de ton cluster, puis effectuent ou demandent des modifications là où c'est nécessaire. Chaque contrôleur essaie de rapprocher l'état actuel du cluster de l'état souhaité ».
 
@@ -181,13 +181,13 @@ Deployment espera            «quiero 3 copias de este molde»
          └── Pod espera-68b9d575f7-gsrlf
 ```
 
-Le **Deployment** est ce que tu écris. Le **ReplicaSet** est créé par le Deployment, et son seul travail est de compter : qu'il y ait autant de Pods que le dit `replicas`. Le suffixe `68b9d575f7` identifie le moule ; quand tu changeras l'image, dans la Leçon 2, un autre ReplicaSet apparaîtra avec un autre suffixe, et c'est ainsi que Kubernetes change de version sans coupure. Et le **Pod** est l'unité qui s'exécute vraiment : la documentation le définit comme « la plus petite unité déployable » de Kubernetes, « un groupe d'un ou plusieurs conteneurs, partageant le stockage et le réseau » ([kubernetes.io, « Pods »](https://kubernetes.io/docs/concepts/workloads/pods/)). Presque toujours, un Pod contient un seul conteneur ; dans ce cours, toujours.
+Le **Deployment** est ce que tu écris. Le **ReplicaSet** est créé par le Deployment, et son seul travail est de compter : qu'il y ait autant de Pods que le dit `replicas`. Le suffixe `68b9d575f7` identifie le moule ; quand tu changeras l'image, dans la Leçon 2, un autre ReplicaSet apparaîtra avec un autre suffixe, et c'est ainsi que Kubernetes change de version petit à petit, l'ancienne répondant pendant que la nouvelle démarre. Et le **Pod** est l'unité qui s'exécute vraiment : la documentation le définit comme « la plus petite unité déployable » de Kubernetes, « un groupe d'un ou plusieurs conteneurs, partageant le stockage et le réseau » ([kubernetes.io, « Pods »](https://kubernetes.io/docs/concepts/workloads/pods/)). Presque toujours, un Pod contient un seul conteneur ; dans ce cours, toujours.
 
-Remarque aussi les noms des Pods : le suffixe final (`9gbtr`, `cprg7`…) est aléatoire. Lors de ton exécution, ce seront d'autres suffixes. C'est pourquoi, dans ce cours, on n'écrit jamais manuellement le nom d'un Pod : on le cherche par son étiquette, avec `-l app=espera`.
+Remarque aussi les noms des Pods : le suffixe final (`9gbtr`, `cprg7`…) est aléatoire. Lors de ton exécution, ce seront d'autres suffixes. C'est pourquoi, dans ce cours, on ne dépend pas de la saisie manuelle du nom d'un Pod : on le cherche par son étiquette, avec `-l app=espera`. Quand une commande a besoin d'un nom précis, on l'obtient de cette recherche, comme le fait `recorrido.sh` avec `kubectl get pods -l app=espera -o jsonpath='{.items[0].metadata.name}'`.
 
 #### 0.2.4 Casser quelque chose exprès
 
-Voici maintenant le test du thermostat. On a supprimé l'un des trois Pods, manuellement, comme s'il était mort :
+Voici maintenant le test du thermostat. On a supprimé l'un des trois Pods, comme s'il était mort. Le script avait obtenu son nom avec la recherche par étiquette ci-dessus ; ici il apparaît déjà substitué. Dans ton cluster, le suffixe sera différent, donc copier la commande telle quelle donnerait `NotFound` : prends le nom dans ton propre `kubectl get pods -l app=espera` :
 
 ```text
 $ kubectl delete pod espera-68b9d575f7-9gbtr
@@ -213,19 +213,22 @@ LAST SEEN   TYPE     REASON             OBJECT                         MESSAGE
 
 Quatre créations : les trois du début et le remplacement. Les événements sont la première chose que l'on regarde quand quelque chose ne se passe pas comme prévu, et le cours les utilise dans chaque leçon.
 
-Cela a une conséquence qui change la façon de travailler : **dans Kubernetes, supprimer un Pod n'arrête rien**. Si tu veux qu'il y ait moins de copies, tu changes l'état souhaité. Si tu n'en veux aucune, tu supprimes le Deployment. Supprimer le Pod fait seulement naître un autre Pod.
+Cela a une conséquence qui change la façon de travailler : **quand un Deployment administre le Pod, supprimer le Pod n'arrête rien**. Si tu veux qu'il y ait moins de copies, tu changes l'état souhaité. Si tu n'en veux aucune, tu supprimes le Deployment. Supprimer le Pod fait seulement naître un autre Pod. La condition compte : la documentation recommande de ne pas créer de Pods isolés, et un Pod isolé (celui que tu crées directement, sans Deployment ni autre contrôleur) n'a personne pour le surveiller, donc si tu le supprimes, il ne revient pas. C'est pourquoi le cours crée les Pods à travers un Deployment (ou un Job, dans la Leçon 8) ([kubernetes.io, « Pods »](https://kubernetes.io/docs/concepts/workloads/pods/)).
 
 #### 0.2.5 Et quand c'est une machine qui tombe en panne
 
-La scène du début n'était pas un conteneur qui meurt : c'était une machine qui s'éteint. Kubernetes couvre cela aussi, mais il vaut mieux savoir **combien de temps cela prend**, parce que ce n'est pas instantané. Quand un nœud cesse de répondre, le cluster le marque comme indisponible, et les Pods qui y tournaient y restent assignés un certain temps avant d'être remplacés sur un autre nœud. Ce temps est inscrit dans chaque Pod. On l'a lu sur le Pod du parcours :
+La scène du début n'était pas un conteneur qui meurt : c'était une machine qui s'arrête. Kubernetes couvre cela aussi, mais il vaut mieux savoir **combien de temps cela prend**, parce que ce n'est pas instantané. Quand un nœud cesse de répondre, le cluster le marque comme indisponible, et les Pods qui y tournaient y restent assignés un certain temps avant d'être remplacés sur un autre nœud. Ce temps est inscrit dans chaque Pod, et la documentation dit combien il vaut : Kubernetes ajoute automatiquement une tolérance pour `node.kubernetes.io/not-ready` et une autre pour `node.kubernetes.io/unreachable`, toutes deux avec `tolerationSeconds=300`, ce qui signifie que les Pods « restent assignés aux nœuds pendant 5 minutes après la détection de l'un de ces problèmes » ([kubernetes.io, « Taints and Tolerations »](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)). Cela fait 300 secondes. Cette attente existe pour éviter de tout déplacer à cause d'une coupure réseau de dix secondes.
+
+Quand tu auras déployé le `revisor`, dans la Leçon 2, tu pourras le voir sur l'un de tes Pods (remplace le nom par l'un des tiens, qui sort de `kubectl get pods`). Voici la sortie réelle, mesurée le 21 octobre 2026 dans un cluster kind à trois nœuds (`kindest/node:v1.37.0`), sur un Pod du `revisor` créé par un Deployment, comme ceux du parcours du cours (la commande était `kubectl get pod -n revisor -l app=revisor -o jsonpath='{.items[0].spec.tolerations}'`, qui choisit le premier Pod par étiquette au lieu de demander son nom) :
 
 ```text
+$ kubectl get pod <nombre-del-pod> -o jsonpath='{.spec.tolerations}'
 [{"effect":"NoExecute","key":"node.kubernetes.io/not-ready","operator":"Exists","tolerationSeconds":300},{"effect":"NoExecute","key":"node.kubernetes.io/unreachable","operator":"Exists","tolerationSeconds":300}]
 ```
 
-Ce sont 300 secondes. La documentation le confirme : Kubernetes ajoute ces deux tolérances automatiquement, et elles signifient que les Pods « restent assignés aux nœuds pendant 5 minutes après la détection de l'un de ces problèmes » ([kubernetes.io, « Taints and Tolerations »](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)). Cette attente existe pour éviter de tout déplacer à cause d'une coupure réseau de dix secondes.
+Ce sont les deux tolérances dont parle la documentation, une par clé (`not-ready` et `unreachable`), toutes deux avec `"effect":"NoExecute"`, `"operator":"Exists"` et `"tolerationSeconds":300`. Aucune des deux ne figure dans le manifeste du `revisor` : Kubernetes les a ajoutées tout seul à la création du Pod. Cette mesure se trouve dans `programas/08-datos-y-tareas/correr.salida.txt`, à la fin de l'Exercice 3.
 
-Alors le service est en panne pendant cinq minutes ? Non, si tu as fait ce que ce cours enseigne : **avoir plusieurs répliques réparties sur des nœuds distincts**. Pendant que celles du nœud en panne attendent leur remplacement, celles des autres nœuds continuent de répondre. Attention à une hypothèse trop commode : le Deployment veille à **combien** de répliques il y a, pas à **où** elles se trouvent. Par défaut, le `kube-scheduler` *s'efforce* de les répartir entre les nœuds, mais s'il ne le peut pas, il les entasse sur un seul (la documentation dit qu'il agit comme s'il avait la règle `whenUnsatisfiable: ScheduleAnyway`, « planifie quand même »). Pour **exiger** la répartition, le manifeste doit le déclarer avec `topologySpreadConstraints` ou avec de l'anti-affinité ([kubernetes.io, « Pod Topology Spread Constraints »](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)) ; le manifeste de cette leçon ne le fait pas, et le cours y revient lorsque le `revisor` devra survivre à un nœud éteint. C'est l'un des objectifs du cours : arrêter un nœud de travail et que le `revisor` continue de répondre.
+Alors le service est en panne pendant cinq minutes ? Non, si tu as fait ce que ce cours enseigne : **avoir plusieurs répliques réparties sur des nœuds distincts**. Mais ce n'est pas non plus « sans aucune coupure », car il y a **deux délais distincts** qu'il vaut mieux ne pas confondre. Le premier est la **détection** : le plan de contrôle n'apprend pas à la même seconde que le nœud est mort ; il attend `--node-monitor-grace-period`, qui vaut 50 secondes par défaut ([kubernetes.io, « kube-controller-manager »](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/)), avant de le déclarer non sain. Pendant ce temps, le Service peut continuer à envoyer des requêtes à la réplique du nœud en panne, et ces requêtes échouent ; celles qui tombent sur les répliques des autres nœuds sont traitées normalement. Le second délai, ce sont les 300 secondes ci-dessus, qui décident seulement **quand le Pod est remplacé** sur une autre machine, pas quand il cesse de recevoir du trafic. Une conséquence pratique : plus de répliques réparties réduisent la part de requêtes perdues, et réessayer côté client atténue le reste. Le cours mesure cette fenêtre plus loin, avec un nœud réellement arrêté. Attention à une hypothèse trop commode : le Deployment veille à **combien** de répliques il y a, pas à **où** elles se trouvent. Par défaut, le `kube-scheduler` *s'efforce* de les répartir entre les nœuds, mais s'il ne le peut pas, il les entasse sur un seul (la documentation dit qu'il agit comme s'il avait la règle `whenUnsatisfiable: ScheduleAnyway`, « planifie quand même »). Pour **exiger** la répartition, le manifeste doit le déclarer avec `topologySpreadConstraints` ou avec de l'anti-affinité ([kubernetes.io, « Pod Topology Spread Constraints »](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)) ; le manifeste de cette leçon ne le fait pas, et le cours y revient lorsque le `revisor` devra survivre à un nœud arrêté. C'est l'un des objectifs du cours : arrêter un nœud de travail et que le `revisor` continue de répondre.
 
 ### 0.3 Les pièces : le plan de contrôle et les nœuds
 
@@ -294,7 +297,7 @@ kube-scheduler
 kubelet
 ```
 
-`kubelet` et `containerd` sont des processus du nœud. Les autres (`etcd`, `kube-apiserver`, etc.) sont des conteneurs que `containerd` a démarrés, et chaque `containerd-shim` est un petit processus auxiliaire qui surveille des conteneurs. Dans cette exécution, il y en a neuf, un par Pod, parce que le *shim* de `runc` regroupe dans un même processus les conteneurs d'un même Pod ; mais cette relation est décidée par le *runtime*, donc ne compte pas les Pods en comptant les *shims* ([containerd, « Runtime v2 »](https://github.com/containerd/containerd/blob/main/docs/runtime-v2.md)). (Le nom `kube-controller` apparaît coupé parce que `ps` n'affiche que les quinze premiers caractères du nom du programme.)
+`kubelet` et `containerd` sont des processus du nœud. Les autres (`etcd`, `kube-apiserver`, etc.) sont des conteneurs que `containerd` a démarrés, et chaque `containerd-shim` est un petit processus auxiliaire qui surveille des conteneurs. Dans cette exécution, il y en a neuf, un par Pod, parce que le *shim* de `runc` regroupe dans un même processus les conteneurs d'un même Pod ; mais cette relation est décidée par le *runtime*, donc ne compte pas les Pods en comptant les *shims* ([containerd, « Runtime v2 »](https://github.com/containerd/containerd/blob/main/docs/runtime-v2.md)). Si tu comptes, la liste de `kube-system` contient huit Pods et il y a neuf *shims*. Le neuvième Pod n'est pas dans cet espace de noms : kind installe aussi `local-path-provisioner`, dans `local-path-storage` (0.6.2 ; la Leçon 8 le montre avec `kubectl get pods -n local-path-storage`). C'est une déduction, car ce parcours n'a pas listé `kubectl get pods -A` ; avec cette commande dans ton cluster, le compte apparaît complet. (Le nom `kube-controller` apparaît coupé parce que `ps` n'affiche que les quinze premiers caractères du nom du programme.)
 
 #### 0.3.4 L'œuf et la poule
 
@@ -403,10 +406,10 @@ Presque tout ce que tu sais de Docker a un équivalent dans Kubernetes. Ce n'est
 | `--restart always` | le **Deployment** et son ReplicaSet, qui remplacent les Pods manquants sur un nœud où ils tiennent | Leçon 2 |
 | `docker compose up --scale revisor=3` | `replicas: 3` dans le Deployment | Leçon 2 |
 | `-p 8080:8080` | un **Service**, et `kubectl port-forward` pour tester depuis ta machine | Leçon 3 |
-| le nom du service dans le réseau de Compose | le **DNS du cluster** : `revisor.<espacio>.svc` | Leçon 3 |
+| le nom du service dans le réseau de Compose | le **DNS du cluster** : `revisor.<espacio>.svc.cluster.local` (dans le même espace, `revisor` suffit) | Leçon 3 |
 | `-e` et `--env-file` | **ConfigMap** et **Secret** | Leçon 4 |
 | `HEALTHCHECK` dans le Dockerfile | **probes** de démarrage (*startup*), de disponibilité (*readiness*) et de vivacité (*liveness*) | Leçon 5 |
-| `--memory` et `--cpus` | `resources.requests` et `resources.limits` | Leçon 5 |
+| `--memory` et `--cpus` (le plafond) ; `--memory-reservation` et `--cpu-shares` (réserve et poids relatif, qui ne garantissent rien) | `resources.limits` (le plafond) et `resources.requests` (ce que le *scheduler* réserve en choisissant un nœud) | Leçon 5 |
 | `--user`, `--read-only`, `--cap-drop ALL` | `securityContext` | Leçon 2 |
 | un volume nommé | un **PersistentVolumeClaim** | Leçon 8 |
 | un conteneur qui s'exécute et se termine | un **Job** ; planifié, un **CronJob** | Leçon 8 |
@@ -456,7 +459,7 @@ Ce qui n'est pas identique, c'est **ce qu'il y a en dessous**. Ce tableau est ce
 | Que ton service survit à la panne d'une machine | **En partie** | un `docker stop` sur un nœud y ressemble, mais les trois « nœuds » partagent ta machine, ton disque et ton noyau : si ton ordinateur tombe en panne, tout s'arrête |
 | Que ta `NetworkPolicy` coupe le trafic | **Cela dépend** | elle est appliquée par le réseau (CNI), pas par Kubernetes ; la Leçon 7 le mesure en direct |
 | Que ton service encaisse telle charge | **Non** | les nœuds se partagent ton processeur et ta mémoire ; les chiffres ne se transposent pas à une autre machine |
-| Qu'un `LoadBalancer` te donne une IP publique | **Non** | kind n'inclut pas d'équilibreur de charge ; il faut une pièce à part ([Cloud Provider KIND](https://kind.sigs.k8s.io/docs/user/loadbalancer/)), et la Leçon 6 le vérifie |
+| Qu'un `LoadBalancer` te donne une IP publique | **Non** | kind n'inclut pas d'équilibreur de charge ; il faut une pièce à part. Le guide de kind propose [Cloud Provider KIND](https://kind.sigs.k8s.io/docs/user/loadbalancer/) ; ce cours installe MetalLB dans le cluster, et la Leçon 6 le vérifie et explique pourquoi elle n'utilise pas l'autre |
 | Que tes données sont en sécurité | **Non** | le stockage par défaut de kind (un provisionneur appelé `local-path-provisioner`, que kind installe à la création du cluster) garde les données dans le nœud lui-même, qui est un conteneur de ta machine ; la Leçon 8 mesure ce qui se perd et quand |
 | Que le plan de contrôle tolère les pannes | **Non** dans ce cours | kind permet plusieurs nœuds de contrôle, mais sur une seule machine cela teste la configuration, pas la tolérance réelle |
 
@@ -540,7 +543,7 @@ Tout ce qui précède est mis en pratique dans les leçons suivantes. Chacune aj
 | 6 | Publier vers l'extérieur | le `LoadBalancer` que kind n'inclut pas (0.6.2) |
 | 7 | Espaces de noms, permissions et réseau | le réseau qui dépend du CNI (0.3.3 et 0.6.2) |
 | 8 | Données et tâches | le stockage qui vit dans le nœud lui-même (0.6.2) |
-| 9 | Mettre à l'échelle et mettre à jour sans coupure | un autre contrôleur, celui qui ajuste `replicas` pour toi |
+| 9 | Mettre à l'échelle et mettre à jour en mesurant chaque coupure | un autre contrôleur, celui qui ajuste `replicas` pour toi |
 | 10 | Tout en un seul `kubectl apply -k` | le fichier comme vérité (0.4) |
 
 ## L'erreur que tu vas voir
@@ -607,7 +610,7 @@ Les trois ensemble donnent la règle : un cluster kind est bien protégé **vers
 
 ## Ce qui se fait de travers
 
-**Supprimer un Pod pour « éteindre » quelque chose.** Le ReplicaSet le remplace en une seconde, comme tu l'as vu en 0.2.4. Pour éteindre, on change l'état souhaité (`replicas: 0`) ou on supprime le Deployment.
+**Supprimer un Pod pour « arrêter » quelque chose.** S'il est administré par un Deployment, le ReplicaSet le remplace en une seconde, comme tu l'as vu en 0.2.4. Pour arrêter, on change l'état souhaité (`replicas: 0`) ou on supprime le Deployment.
 
 **Donner des ordres sur quelque chose qui est géré avec des fichiers.** Un `kubectl scale` ou un `kubectl edit` sur un objet qui vit dans Git dure jusqu'au prochain `apply`, et la personne suivante qui appliquera ne saura pas qu'il a existé. Si le changement vaut la peine, on le fait dans le fichier.
 
@@ -619,7 +622,7 @@ Les trois ensemble donnent la règle : un cluster kind est bien protégé **vers
 
 **Se fier à la coche verte.** `kind create cluster` a dit `✓ Joining worker nodes` avec deux nœuds qui n'ont jamais réussi à rejoindre le cluster (0.6.3). Après avoir créé quelque chose, on regarde son état.
 
-**Écrire manuellement le nom d'un Pod.** Le suffixe est aléatoire et change chaque fois que le Pod renaît. On cherche par étiquette (`-l app=...`).
+**Dépendre du nom d'un Pod.** Le suffixe est aléatoire et change chaque fois que le Pod renaît. On cherche par étiquette (`-l app=...`) et, si une commande demande le nom, on le prend de cette recherche.
 
 **Copier un tutoriel sans regarder la date.** Kubernetes change trois fois par an. Ce qui a été retiré reste sur internet : des tutoriels qui installent Docker à l'intérieur des nœuds (dockershim a été retiré dans la 1.24) ou qui utilisent `ingress-nginx`, que le projet Kubernetes a retiré en mars 2026 : sans nouvelles versions ni correctifs de sécurité ([kubernetes.io, « Ingress NGINX Retirement »](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/)). La Leçon 6 explique ce qu'on utilise à sa place.
 
@@ -659,7 +662,7 @@ Sans rien exécuter, prédis ce que répond le cluster dans chaque cas. Après l
 
 ### Exercice 4 — Kind en cinq phrases
 
-Une collègue te demande : « si sur mon ordinateur portable le `revisor` dans kind survit à l'extinction d'un nœud, est-ce que je peux déjà dire qu'en production il survit aussi ? ». Réponds-lui en cinq phrases au maximum, en utilisant les mots *conteneur*, *noyau*, *API* et *production*. Sans regarder la leçon.
+Une collègue te demande : « si sur mon ordinateur portable le `revisor` dans kind survit à l'arrêt d'un nœud, est-ce que je peux déjà dire qu'en production il survit aussi ? ». Réponds-lui en cinq phrases au maximum, en utilisant les mots *conteneur*, *noyau*, *API* et *production*. Sans regarder la leçon.
 
 ## Solutions
 
@@ -691,7 +694,7 @@ Les quatre ont été mesurées avec `ejercicio3.sh` ; sa sortie complète se tro
 
 ### Solution 4
 
-Une réponse possible : « Pas encore. Dans kind, chaque nœud est un *conteneur* sur ton ordinateur portable, donc les trois nœuds partagent ton disque, ta mémoire et ton *noyau* : en éteindre un ressemble à la perte d'une machine, mais si ton ordinateur portable tombe en panne, tout s'arrête. Ce que tu as bien démontré, c'est que ta configuration de l'*API* est correcte : les répliques, leur répartition et leur remplacement fonctionnent de la même façon dans n'importe quel Kubernetes. Pour l'affirmer de la *production*, il reste à le tester sur de vraies machines séparées, avec leur réseau, leurs disques et leur charge. Kind démontre que tu le comprends ; la production se démontre en production ».
+Une réponse possible : « Pas encore. Dans kind, chaque nœud est un *conteneur* sur ton ordinateur portable, donc les trois nœuds partagent ton disque, ta mémoire et ton *noyau* : en arrêter un ressemble à la perte d'une machine, mais si ton ordinateur portable tombe en panne, tout s'arrête. Ce que tu as bien démontré, c'est que ta configuration de l'*API* est correcte : les répliques, leur répartition et leur remplacement fonctionnent de la même façon dans n'importe quel Kubernetes. Pour l'affirmer de la *production*, il reste à le tester sur de vraies machines séparées, avec leur réseau, leurs disques et leur charge. Kind démontre que tu le comprends ; la production se démontre en production ».
 
 ## Comment savoir que j'ai réussi
 

@@ -1,0 +1,27 @@
+# fig10_02.deployment-malo.yaml — FALLA A PROPÓSITO: un Deployment que NO cumple el
+# nivel «restricted». No dice nada de seguridad: ni usuario, ni capacidades, ni
+# perfil seccomp. En el espacio «revisor» el clúster avisa al aplicarlo y rechaza
+# sus Pods. Se aplica con:  kubectl apply -n revisor -f fig10_02.deployment-malo.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: malo
+  labels:
+    app: malo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: malo
+  template:
+    metadata:
+      labels:
+        app: malo
+    spec:
+      containers:
+      - name: malo
+        image: curso-docker-prueba:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9000

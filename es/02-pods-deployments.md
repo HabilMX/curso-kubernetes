@@ -2,7 +2,7 @@
 
 Lunes, 8:50 de la mañana. A las 9:30 el equipo tiene la demostración del clúster nuevo y tu parte es la más sencilla: que el `revisor` aparezca corriendo, con tres copias. La imagen está en tu laptop desde el viernes, construida y probada con `docker run`. Escribes el manifiesto, lo aplicas, y `kubectl` responde `deployment.apps/revisor created`. Respiras. Pides los Pods y los tres dicen lo mismo: `ImagePullBackOff`. Alguien del equipo, sin levantar la vista, te dice: «bórralo y vuelve a aplicarlo». Lo haces. Mismo estado. Lo haces otra vez. Son las 9:05 y la imagen sigue ahí, en tu `docker image ls`, a dos centímetros del clúster que dice no encontrarla.
 
-Borrar y volver a aplicar no iba a servir nunca, porque el clúster no estaba confundido: te estaba diciendo exactamente qué le faltaba. Esta lección te enseña a escucharlo, a darle lo que pide y a entender qué objetos nacen cuando aplicas un Deployment. Así, cuando algo falle a las 9:05, sabrás dónde mirar.
+Borrar y volver a aplicar no iba a servir de nada en esta situación, porque el clúster no estaba confundido: te estaba diciendo exactamente qué le faltaba. Esta lección te enseña a escucharlo, a darle lo que pide y a entender qué objetos nacen cuando aplicas un Deployment. Así, cuando algo falle a las 9:05, sabrás dónde mirar.
 
 **Tiempo:** 2 × 45 min
 
@@ -204,7 +204,7 @@ Dentro de la plantilla, `containers` es una lista; en este curso siempre trae un
 
 Al final hay un volumen, `datos`, de tipo `emptyDir`, montado en `/datos`. Está ahí por una razón concreta. La imagen del curso de Docker define `REVISOR_REPORTE=/datos/reporte.json`: cada vez que alguien le pide el reporte, el `revisor` lo guarda en ese archivo. Pero el `securityContext` del contenedor (2.2.5) pone **todo** su sistema de archivos en solo lectura. Sin un volumen, el `revisor` arrancaría sin quejarse y fallaría después, la primera vez que intentara guardar un reporte: en su código, ese caso responde con un error 500 y el mensaje `no pude guardar el reporte`.
 
-Un `emptyDir` es la forma más sencilla de dar un lugar donde escribir. La [documentación de volúmenes](https://kubernetes.io/docs/concepts/storage/volumes/) lo describe así: se crea cuando el Pod se asigna a un nodo, empieza vacío, y «cuando un Pod se quita de un nodo por cualquier razón, los datos del `emptyDir` se borran para siempre». Si el contenedor se cae y se reinicia, los datos sobreviven, porque el Pod sigue en el nodo. El `sizeLimit: 10Mi` le pone tope: un reporte pesa unos cuantos kilobytes, y un tope evita que un error llene el disco del nodo. La Lección 8 cambia este `emptyDir` por un volumen persistente y mide qué se pierde con cada uno.
+Un `emptyDir` es la forma más sencilla de dar un lugar donde escribir. La [documentación de volúmenes](https://kubernetes.io/docs/concepts/storage/volumes/) lo describe así: se crea cuando el Pod se asigna a un nodo, empieza vacío, y «cuando un Pod se quita de un nodo por cualquier razón, los datos del `emptyDir` se borran para siempre». Si el contenedor se cae y se reinicia, los datos sobreviven, porque el Pod sigue en el nodo. El `sizeLimit: 10Mi` le pone tope: un reporte pesa unos cuantos kilobytes, y un tope evita que un error llene el disco del nodo. La Lección 8 contrasta este `emptyDir` con un volumen persistente y mide qué se pierde con cada uno.
 
 #### 2.2.5 Los dos `securityContext`
 
@@ -253,7 +253,7 @@ $ docker exec curso-k8s-l2-worker crictl images | grep curso-docker-revisor
 docker.io/library/curso-docker-revisor          1.6.0                70e09194319be       3.68MB
 ```
 
-Mira el nombre con el que quedó guardada: `docker.io/library/curso-docker-revisor`. Es el nombre completo que corresponde a `curso-docker-revisor`: cuando una imagen no dice de qué registro viene, se entiende que es de Docker Hub (`docker.io`) y, si tampoco dice de qué usuario, de su espacio de imágenes oficiales (`library`). La documentación de imágenes lo explica con el ejemplo de `busybox`, que equivale a `docker.io/library/busybox:latest`. Es el mismo nombre que aparecía en el error de 2.3, y por eso ahora el `kubelet` la encuentra. (El tamaño que reporta `crictl` no coincide con el de `docker image ls`, y el identificador tampoco coincide con el `sha256:bd1b2e7d…` que imprimió `kind load`: cada herramienta mide y resume la imagen a su manera. Que sea la misma lo prueban el nombre y la etiqueta, y que el `kubelet` la encuentre en el siguiente paso.)
+Mira el nombre con el que quedó guardada: `docker.io/library/curso-docker-revisor`. Es el nombre completo que corresponde a `curso-docker-revisor`: cuando una imagen no dice de qué registro viene, se entiende que es de Docker Hub (`docker.io`) y, si tampoco dice de qué usuario, de su espacio de imágenes oficiales (`library`). La documentación de imágenes lo explica con el ejemplo de `busybox`, que equivale a `docker.io/library/busybox:latest`. Es el mismo nombre que aparecía en el error de 2.3, y por eso ahora el `kubelet` la encuentra. (Los números parecen distintos, pero tienen explicación. `crictl` dice 3.68MB. Con Docker Engine 29, `docker image ls curso-docker-revisor:1.6.0` muestra dos columnas: `DISK USAGE` 16.2MB, lo que ocupa descomprimida en disco, y `CONTENT SIZE` 3.68MB, el contenido comprimido; `crictl` reporta esta segunda. Si tu Docker es anterior, `docker image ls` muestra una sola cifra y puede no coincidir. El identificador de `crictl`, `70e09194319be`, tampoco es el `sha256:bd1b2e7d…` de `kind load`: cada herramienta identifica la imagen con un resumen distinto. Que sea la misma lo prueban el nombre y la etiqueta, y que el `kubelet` la encuentre en el siguiente paso.)
 
 No hace falta volver a aplicar nada. El `kubelet` seguía reintentando por su cuenta; en el siguiente intento encontró la imagen y arrancó el contenedor:
 
@@ -309,7 +309,7 @@ Cada eslabón tiene un trabajo distinto:
 | Objeto | Lo crea | Su trabajo | Si lo borras |
 |---|---|---|---|
 | **Deployment** | tú | guardar el estado deseado y administrar versiones: cuando cambias la plantilla, crea un ReplicaSet nuevo y pasa las réplicas del viejo al nuevo | se borran sus ReplicaSets y sus Pods; el servicio se apaga |
-| **ReplicaSet** | el Deployment | contar: que haya tantos Pods con su plantilla exacta como dice `replicas` | el Deployment crea otro igual |
+| **ReplicaSet** | el Deployment | contar: que haya tantos Pods con su plantilla exacta como dice `replicas` | el Deployment crea otro igual, pero `kubectl delete` borra en cascada sus Pods: medido, los tres Pods pasaron a `Terminating` a la vez y el reemplazo arrancó de cero, con un corte; por eso no se tocan a mano |
 | **Pod** | el ReplicaSet | correr el contenedor | el ReplicaSet crea otro |
 
 La [documentación de ReplicaSet](https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/) define su propósito en una frase: «mantener un conjunto estable de Pods réplica corriendo en todo momento». Y recomienda no usarlos directamente: «recomendamos usar Deployments en lugar de ReplicaSets directamente», salvo casos especiales. La de Deployments es todavía más tajante: «no administres ReplicaSets que pertenecen a un Deployment». En este curso nunca vas a escribir un ReplicaSet. Vas a **verlos**, porque leerlos explica lo que hace el Deployment.
@@ -357,7 +357,7 @@ El primero pide los Pods cuya etiqueta `app` sea `revisor` o `prueba`, y como to
 
 `No resources found` no es un error. Es una respuesta: no hay nada que coincida. Distinguir «no hay nada» de «algo falló» es parte de leer lo que dice el clúster.
 
-¿Por qué el curso busca siempre por etiqueta y nunca por nombre de Pod? Porque el nombre cambia cada vez que el Pod renace, y la etiqueta no. Un comando que escribe `revisor-697fb84f97-gn68x` deja de servir en cuanto ese Pod muere. Uno que escribe `-l app=revisor` sirve siempre. Los Services de la Lección 3 eligen sus Pods igual: por etiqueta. Eso vuelve importante lo que muestra el Ejercicio 2.
+¿Por qué el curso busca siempre por etiqueta y nunca por nombre de Pod? Porque el nombre cambia cada vez que el Pod renace, y la etiqueta no. Un comando que escribe `revisor-697fb84f97-gn68x` deja de servir en cuanto ese Pod muere. Uno que escribe `-l app=revisor` sigue funcionando a través de los reemplazos, dentro del mismo espacio de nombres y mientras ningún otro Pod use esa etiqueta (el Ejercicio 2 muestra qué pasa cuando alguno la usa). Los Services de la Lección 3 eligen sus Pods igual: por etiqueta. Eso vuelve importante lo que muestra el Ejercicio 2.
 
 ### 2.7 Un Pod suelto contra un Pod del Deployment
 
@@ -498,7 +498,7 @@ revisor-55cc969586   3         3         3       2s
 revisor-697fb84f97   0         0         0       55s
 ```
 
-Lee el avance de `rollout status`: uno de tres nuevos, dos de tres, y al final «una réplica vieja pendiente de terminar». Los Pods no se reemplazaron de golpe: se fue creando uno nuevo y quitando uno viejo, por turnos. Esa es la estrategia por omisión de un Deployment, `RollingUpdate`. Sus dos perillas valen 25 % si no las tocas: `maxSurge`, cuántos Pods de más puede haber durante el cambio (se redondea hacia arriba), y `maxUnavailable`, cuántos pueden faltar (se redondea hacia abajo). Con tres réplicas, el 25 % es 0.75: `maxSurge` queda en 1 y `maxUnavailable` en 0. Dicho en simple: durante el cambio puede haber hasta cuatro Pods, y nunca menos de tres disponibles. La Lección 9 vuelve a esto con carga de verdad y mide si se pierde alguna petición.
+Lee el avance de `rollout status`: uno de tres nuevos, dos de tres, y al final «una réplica vieja pendiente de terminar». Los Pods no se reemplazaron de golpe: se fue creando uno nuevo y quitando uno viejo, por turnos. Esa es la estrategia por omisión de un Deployment, `RollingUpdate`. Sus dos perillas valen 25 % si no las tocas: `maxSurge`, cuántos Pods de más puede haber durante el cambio (se redondea hacia arriba), y `maxUnavailable`, cuántos pueden faltar (se redondea hacia abajo). Con tres réplicas, el 25 % es 0.75: `maxSurge` queda en 1 y `maxUnavailable` en 0. Dicho en simple: durante el cambio puede haber hasta cuatro Pods, y el controlador no retira ninguno viejo hasta que el nuevo esté listo, así que su plan nunca baja de tres disponibles. Es una promesa del controlador, no del universo: si un nodo cae o un proceso muere en ese momento, la cuenta baja por causas ajenas a él. Y con otro número de réplicas el redondeo cambia: con cuatro, el 25 % ya es 1 y `maxUnavailable` valdría 1. La Lección 9 vuelve a esto con carga de verdad y mide si se pierde alguna petición.
 
 Y el resultado: un ReplicaSet nuevo, `revisor-55cc969586`, con las tres réplicas, y el viejo, `revisor-697fb84f97`, en `0 0 0`. El viejo **no se borró**: se quedó vacío, como registro de la revisión 1. La documentación dice que, por omisión, se guardan 10 ReplicaSets viejos (`revisionHistoryLimit`), y que borrar uno es perder la posibilidad de volver a esa revisión. La Lección 9 usa esa posibilidad con `rollout undo`.
 
@@ -702,7 +702,7 @@ Elige uno de los Pods del `revisor` y cámbiale la etiqueta `app` a otro valor:
 kubectl label pod <un-pod-del-revisor> app=fuera --overwrite
 ```
 
-Predice: ¿cuántos Pods hay cinco segundos después? ¿El Pod que cambiaste sigue corriendo? ¿Quién es su dueño ahora? Compruébalo con `kubectl get pods -L app` (la opción `-L` agrega una columna con el valor de esa etiqueta) y con el `jsonpath` de `ownerReferences` de 2.5. Al terminar, borra el Pod que sacaste.
+Predice: ¿cuántos Pods hay cinco segundos después? ¿El Pod que cambiaste sigue corriendo? ¿Quién es su dueño ahora? Compruébalo con `kubectl get pods -L app` (la opción `-L` agrega una columna con el valor de esa etiqueta) y con el `jsonpath` de 2.7.1, `-o jsonpath='dueños={.metadata.ownerReferences}{"\n"}'`, que sí sirve cuando la lista de dueños está vacía (el `[0]` de 2.5 sobre una lista vacía imprime solo una barra, `/`, y sale con código 0, sin avisar que no había nada). Al terminar, borra el Pod que sacaste.
 
 ### Ejercicio 2 — El Pod que se cuela (proyecto)
 
@@ -784,9 +784,12 @@ dueños=
 
 ### Solución 2
 
-Medido en `correr.salida.txt`. (Esa corrida se hizo cuando `fig02_03.adoptado.yaml` todavía no declaraba `ports`. El campo es informativo y no cambia ninguna de estas salidas, pero sí importa para el tráfico de la Lección 3, y por eso ahora el Pod es idéntico a los del Deployment.)
+Medido en `correr.salida.txt`. (`fig02_03.adoptado.yaml` declara el puerto `http`, igual que la plantilla del Deployment. El campo es informativo y no cambia ninguna de estas salidas, pero importa para el tráfico de la Lección 3: por eso el Pod es idéntico a los del Deployment.)
 
 ```text
+$ kubectl apply -f fig02_03.adoptado.yaml
+pod/revisor-extra created
+
 $ kubectl get pods -l app=revisor
 NAME                       READY   STATUS    RESTARTS   AGE
 revisor-55cc969586-7tmfc   1/1     Running   0          13s
@@ -840,7 +843,7 @@ NAME      READY   UP-TO-DATE   AVAILABLE   AGE
 revisor   3/3     1            3           109s
 ```
 
-**Tres Pods viejos siguen corriendo y hay un solo Pod nuevo, atorado en `ErrImagePull`.** Con tres réplicas, `maxSurge` es 1 (puede haber un Pod de más) y `maxUnavailable` es 0 (no puede faltar ninguno). El Deployment creó un Pod nuevo y, para quitar uno viejo, esperó a que el nuevo estuviera disponible. Nunca lo estuvo, así que no quitó ninguno. `kubectl get deployment` lo resume: `READY 3/3` (el servicio sigue completo), `UP-TO-DATE 1` (solo una réplica tiene la plantilla nueva). **Un *rollout* con una imagen rota no tumba el servicio**: se atora con el servicio intacto. `rollout status` se rindió a los 40 segundos porque se lo pediste; el Deployment, por su cuenta, esperaría 600 segundos (`progressDeadlineSeconds`, cuyo valor por omisión según la documentación es 600) antes de marcar el *rollout* como fallido con la condición `ProgressDeadlineExceeded`.
+**Tres Pods viejos siguen corriendo y hay un solo Pod nuevo, atorado en `ErrImagePull`.** Con tres réplicas, `maxSurge` es 1 (puede haber un Pod de más) y `maxUnavailable` es 0 (no puede faltar ninguno). El Deployment creó un Pod nuevo y, para quitar uno viejo, esperó a que el nuevo estuviera disponible. Nunca lo estuvo, así que no quitó ninguno. `kubectl get deployment` lo resume: `READY 3/3` (el servicio sigue completo), `UP-TO-DATE 1` (solo una réplica tiene la plantilla nueva). **Aquí, un *rollout* con una imagen rota no tumba el servicio**: se atora con el servicio intacto, porque con tres réplicas `maxUnavailable` es 0. No es una ley: con cuatro réplicas el 25 % ya es 1 y el Deployment sí retiraría una réplica sana antes de saber si la nueva arranca, y si un Pod viejo cae mientras el *rollout* está atorado, la capacidad baja. `rollout status` se rindió a los 40 segundos porque se lo pediste; el Deployment, por su cuenta, esperaría 600 segundos (`progressDeadlineSeconds`, cuyo valor por omisión según la documentación es 600) antes de marcar el *rollout* como fallido con la condición `ProgressDeadlineExceeded`.
 
 Al volver a aplicar el archivo bueno:
 

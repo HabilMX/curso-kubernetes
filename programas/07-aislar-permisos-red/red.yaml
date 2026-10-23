@@ -1,0 +1,108 @@
+# red.yaml — Lección 7: todo cerrado por defecto, y solo las aperturas necesarias.
+# ⚠️ Que el clúster APLIQUE estas reglas depende de la red (CNI). kindnet, la red
+# de kind desde la v0.24.0, sí las aplica: la Lección 7 lo mide con intruso y
+# depurar. Con un CNI que no las aplique, estos objetos se guardan y no hacen nada.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cerrado
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Todos pueden preguntarle al DNS del clúster (si no, ningún nombre resuelve).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: dns
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - {protocol: UDP, port: 53}
+    - {protocol: TCP, port: 53}
+---
+# El revisor sale solo hacia prueba:9000.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: revisor-salida
+spec:
+  podSelector:
+    matchLabels:
+      app: revisor
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: prueba
+    ports:
+    - {protocol: TCP, port: 9000}
+---
+# prueba solo recibe del revisor.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: prueba-entrada
+spec:
+  podSelector:
+    matchLabels:
+      app: prueba
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: revisor
+    ports:
+    - {protocol: TCP, port: 9000}
+---
+# Al revisor solo entran los Pods marcados «acceso-revisor: permitido» y los
+# Envoy de la puerta (Lección 6), que viven en el espacio envoy-gateway-system.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: revisor-entrada
+spec:
+  podSelector:
+    matchLabels:
+      app: revisor
+  policyTypes: [Ingress]
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          acceso-revisor: permitido
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: envoy-gateway-system
+    ports:
+    - {protocol: TCP, port: 8080}
+---
+# …y esos mismos Pods pueden SALIR hacia el revisor:8080. Con «cerrado» también
+# la salida está prohibida: abrir solo la entrada del revisor no basta (medido).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: acceso-revisor-salida
+spec:
+  podSelector:
+    matchLabels:
+      acceso-revisor: permitido
+  policyTypes: [Egress]
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: revisor
+    ports:
+    - {protocol: TCP, port: 8080}

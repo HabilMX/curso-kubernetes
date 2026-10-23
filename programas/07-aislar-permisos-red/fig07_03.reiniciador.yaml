@@ -1,0 +1,32 @@
+# fig07_03.reiniciador.yaml — Ejercicio 2: una cuenta que puede reiniciar el
+# revisor y NADA más. rollout restart necesita leer el Deployment (get) y
+# cambiarle una anotación (patch); resourceNames lo limita a UN Deployment.
+# Se aplica con: kubectl apply -n revisor -f fig07_03.reiniciador.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: reiniciador
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: reiniciador
+rules:
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  resourceNames: ["revisor"]
+  verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: reiniciador
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: reiniciador
+subjects:
+- kind: ServiceAccount
+  name: reiniciador
+  namespace: revisor

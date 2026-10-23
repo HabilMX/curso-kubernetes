@@ -1,0 +1,7 @@
+# Envoy Gateway v1.9.2, instalado SOLO en este clúster. Trae los CRD de Gateway API
+# (bundle v1.6.1) y los suyos. Su guía oficial lo instala con server-side apply:
+#   kubectl apply --server-side -k infra/envoy-gateway
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- https://github.com/envoyproxy/gateway/releases/download/v1.9.2/install.yaml

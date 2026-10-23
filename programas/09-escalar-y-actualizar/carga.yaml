@@ -1,0 +1,37 @@
+# carga.yaml — Lección 9: genera carga contra el revisor para ver subir el HPA.
+# No forma parte del proyecto: se aplica con -f, se observa y se borra.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: carga
+  namespace: revisor
+spec:
+  parallelism: 4
+  backoffLimit: 0
+  activeDeadlineSeconds: 600
+  template:
+    metadata:
+      labels:
+        app: carga
+        acceso-revisor: permitido
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: carga
+        image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+        command: ["sh", "-c", "while true; do curl -s -o /dev/null http://revisor/salud; done"]
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 200m, memory: 32Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]

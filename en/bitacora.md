@@ -77,7 +77,7 @@ _date:_
 - What was lost and what was not when deleting the Pod with and without a volume:
 - How many times my `CronJob` ran and how I verified it:
 
-## Lesson 9 — Scaling and updating without downtime
+## Lesson 9 — Scaling and updating, measuring every outage
 
 _date:_
 

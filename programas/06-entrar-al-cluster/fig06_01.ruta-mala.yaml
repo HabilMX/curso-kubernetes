@@ -1,0 +1,19 @@
+# fig06_01.ruta-mala.yaml — FALLA A PROPÓSITO: la misma ruta del revisor con una
+# letra de menos en el Service de destino (revisr). El Gateway la acepta, pero no
+# encuentra a quién mandarle el tráfico: ResolvedRefs=False BackendNotFound, y la
+# puerta responde 500. Se corrige volviendo a aplicar la kustomization (apply -k .).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: revisor
+spec:
+  parentRefs:
+  - name: revisor
+  rules:
+  - matches:
+    - path:
+        type: PathPrefix
+        value: /
+    backendRefs:
+    - name: revisr
+      port: 80

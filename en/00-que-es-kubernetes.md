@@ -70,7 +70,7 @@ A container is a process with its own filesystem and its own network, on **one**
 - **Someone to replace** a copy if it dies, without waiting for a person.
 - A way for other programs to **find it by name**, even if its copies change machine and address.
 - Configuration that is **changeable without rebuilding** the image.
-- A way for a new version to **replace the old one without cutting off** the service.
+- A way for a new version to **replace the old one without cutting off** the service. Kubernetes provides the mechanism (changing the copies a few at a time); whether there is really no interruption also depends on the application signaling when it is ready and shutting down in an orderly way (Lessons 5 and 9).
 
 With Docker and Compose you can solve some of these things on a single machine. None across several. Kubernetes is the tool that solves all six, on a group of machines it calls a **cluster**.
 
@@ -181,13 +181,13 @@ Deployment espera            «quiero 3 copias de este molde»
          └── Pod espera-68b9d575f7-gsrlf
 ```
 
-The **Deployment** is what you write. The **ReplicaSet** is created by the Deployment, and its only job is to count: to make sure there are as many Pods as `replicas` says. The suffix `68b9d575f7` identifies the blueprint; when you change the image in Lesson 2, another ReplicaSet with another suffix will appear, and that is how Kubernetes changes versions without cutting off service. And the **Pod** is the unit that actually runs: the documentation defines it as “the smallest deployable units of computing” in Kubernetes, “a group of one or more containers, with shared storage and network resources” ([kubernetes.io, “Pods”](https://kubernetes.io/docs/concepts/workloads/pods/)). Almost always, a Pod has a single container; in this course, always.
+The **Deployment** is what you write. The **ReplicaSet** is created by the Deployment, and its only job is to count: to make sure there are as many Pods as `replicas` says. The suffix `68b9d575f7` identifies the blueprint; when you change the image in Lesson 2, another ReplicaSet with another suffix will appear, and that is how Kubernetes changes versions gradually, with the old one serving while the new one starts up. And the **Pod** is the unit that actually runs: the documentation defines it as “the smallest deployable units of computing” in Kubernetes, “a group of one or more containers, with shared storage and network resources” ([kubernetes.io, “Pods”](https://kubernetes.io/docs/concepts/workloads/pods/)). Almost always, a Pod has a single container; in this course, always.
 
-Notice also the names of the Pods: the final suffix (`9gbtr`, `cprg7`…) is random. On your run they will be different. That is why, in this course, a Pod's name is never typed by hand: you look it up by its label, with `-l app=espera`.
+Notice also the names of the Pods: the final suffix (`9gbtr`, `cprg7`…) is random. On your run they will be different. That is why, in this course, nothing depends on typing a Pod's name by hand: you look it up by its label, with `-l app=espera`. When a command needs a specific name, it is obtained from that lookup, as `recorrido.sh` does with `kubectl get pods -l app=espera -o jsonpath='{.items[0].metadata.name}'`.
 
 #### 0.2.4 Breaking something on purpose
 
-Now the thermostat test. One of the three Pods was deleted by hand, as if it had died:
+Now the thermostat test. One of the three Pods was deleted, as if it had died. The script obtained its name with the label lookup above; here it appears already substituted. On your cluster the suffix will be different, so copying the command as is would give `NotFound`: take the name from your own `kubectl get pods -l app=espera`:
 
 ```text
 $ kubectl delete pod espera-68b9d575f7-9gbtr
@@ -213,19 +213,22 @@ LAST SEEN   TYPE     REASON             OBJECT                         MESSAGE
 
 Four creations: the three from the beginning and the replacement. Events are the first thing you look at when something does not turn out as expected, and the course uses them in every lesson.
 
-This has a consequence that changes how you work: **in Kubernetes, deleting a Pod does not shut anything down**. If you want fewer copies, you change the desired state. If you want none, you delete the Deployment. Deleting the Pod only causes another one to be born.
+This has a consequence that changes how you work: **when a Deployment manages the Pod, deleting the Pod does not shut anything down**. If you want fewer copies, you change the desired state. If you want none, you delete the Deployment. Deleting the Pod only causes another one to be born. The condition matters: the documentation recommends not creating bare Pods, and a bare Pod (one you create directly, with no Deployment or other controller) has nobody watching over it, so if you delete it, it does not come back. That is why the course creates Pods through a Deployment (or a Job, in Lesson 8) ([kubernetes.io, “Pods”](https://kubernetes.io/docs/concepts/workloads/pods/)).
 
 #### 0.2.5 And when what goes down is a machine
 
-The opening scene was not a container dying: it was a machine shutting down. Kubernetes covers that too, but it pays to know **how long it takes**, because it is not instantaneous. When a node stops responding, the cluster marks it as unavailable, and the Pods that were running on it stay bound there for a while before being replaced on another node. That time is written into every Pod. It was read from the Pod in the tour:
+The opening scene was not a container dying: it was a machine shutting down. Kubernetes covers that too, but it pays to know **how long it takes**, because it is not instantaneous. When a node stops responding, the cluster marks it as unavailable, and the Pods that were running on it stay bound there for a while before being replaced on another node. That time is written into every Pod, and the documentation says how long it is: Kubernetes automatically adds a toleration for `node.kubernetes.io/not-ready` and another for `node.kubernetes.io/unreachable`, both with `tolerationSeconds=300`, and that means the Pods “remain bound to nodes for 5 minutes after one of these problems is detected” ([kubernetes.io, “Taints and Tolerations”](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)). That is 300 seconds. The wait exists so that everything is not moved over a ten-second network hiccup.
+
+Once you have the `revisor` deployed, in Lesson 2, you can see this on one of your Pods (replace the name with one of yours, which comes from `kubectl get pods`). This is the real output, measured on October 21, 2026 on a three-node kind cluster (`kindest/node:v1.37.0`), on a `revisor` Pod created by a Deployment, like the ones in the course tour (the command was `kubectl get pod -n revisor -l app=revisor -o jsonpath='{.items[0].spec.tolerations}'`, which picks the first Pod by label instead of asking for its name):
 
 ```text
+$ kubectl get pod <nombre-del-pod> -o jsonpath='{.spec.tolerations}'
 [{"effect":"NoExecute","key":"node.kubernetes.io/not-ready","operator":"Exists","tolerationSeconds":300},{"effect":"NoExecute","key":"node.kubernetes.io/unreachable","operator":"Exists","tolerationSeconds":300}]
 ```
 
-It is 300 seconds. The documentation confirms it: Kubernetes adds those two tolerations automatically, and they mean that Pods “remain bound to nodes for 5 minutes after one of these problems is detected” ([kubernetes.io, “Taints and Tolerations”](https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/)). The wait exists so that everything is not moved over a ten-second network hiccup.
+These are the two tolerations the documentation talks about, one per key (`not-ready` and `unreachable`), both with `"effect":"NoExecute"`, `"operator":"Exists"` and `"tolerationSeconds":300`. Neither is in the `revisor` manifest: Kubernetes added them on its own when the Pod was created. That measurement is in `programas/08-datos-y-tareas/correr.salida.txt`, at the end of Exercise 3.
 
-So is the service down for five minutes? Not if you did what this course teaches: **having several replicas spread across different nodes**. While the ones on the downed node wait for their replacement, the ones on the other nodes keep serving requests. Watch out for a comfortable assumption: the Deployment watches over **how many** replicas there are, not **where** they end up. By default, the `kube-scheduler` *tries* to spread them across nodes, but if it cannot, it piles them onto one (the documentation says it acts as if it had the rule `whenUnsatisfiable: ScheduleAnyway`). To **require** the spread, the manifest has to declare it with `topologySpreadConstraints` or with anti-affinity ([kubernetes.io, “Pod Topology Spread Constraints”](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)); this lesson's manifest does not do so, and the course comes back to this when the `revisor` has to survive a node being shut down. That is one of the goals of the course: stopping a worker node and having the `revisor` keep responding.
+So is the service down for five minutes? Not if you did what this course teaches: **having several replicas spread across different nodes**. But it is not “no interruption at all” either, because there are **two different time windows** and it pays not to confuse them. The first is **detection**: the control plane does not learn in the same second that the node died; it waits `--node-monitor-grace-period`, which is 50 seconds by default ([kubernetes.io, “kube-controller-manager”](https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/)), before declaring it unhealthy. During that time the Service may keep sending requests to the replica on the downed node, and those requests fail; the ones that land on the replicas on the other nodes are served normally. The second window is the 300 seconds above, which only decide **when the Pod is replaced** on another machine, not when it stops receiving traffic. A practical consequence: more replicas spread out reduce the share of requests that are lost, and retrying on the client softens the rest. The course measures that window later, with a node really shut down. Watch out for a comfortable assumption: the Deployment watches over **how many** replicas there are, not **where** they end up. By default, the `kube-scheduler` *tries* to spread them across nodes, but if it cannot, it piles them onto one (the documentation says it acts as if it had the rule `whenUnsatisfiable: ScheduleAnyway`). To **require** the spread, the manifest has to declare it with `topologySpreadConstraints` or with anti-affinity ([kubernetes.io, “Pod Topology Spread Constraints”](https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/)); this lesson's manifest does not do so, and the course comes back to this when the `revisor` has to survive a node being shut down. That is one of the goals of the course: stopping a worker node and having the `revisor` keep responding.
 
 ### 0.3 The components: the control plane and the nodes
 
@@ -294,7 +297,7 @@ kube-scheduler
 kubelet
 ```
 
-`kubelet` and `containerd` are node processes. The others (`etcd`, `kube-apiserver`, etc.) are containers that `containerd` started, and each `containerd-shim` is a small helper process that watches over containers. In this run there are nine, one per Pod, because the `runc` *shim* groups the containers of the same Pod into a single process; but that relationship is decided by the *runtime*, so do not count Pods by counting *shims* ([containerd, “Runtime v2”](https://github.com/containerd/containerd/blob/main/docs/runtime-v2.md)). (The name `kube-controller` appears cut off because `ps` shows only the first fifteen characters of the program name.)
+`kubelet` and `containerd` are node processes. The others (`etcd`, `kube-apiserver`, etc.) are containers that `containerd` started, and each `containerd-shim` is a small helper process that watches over containers. In this run there are nine, one per Pod, because the `runc` *shim* groups the containers of the same Pod into a single process; but that relationship is decided by the *runtime*, so do not count Pods by counting *shims* ([containerd, “Runtime v2”](https://github.com/containerd/containerd/blob/main/docs/runtime-v2.md)). If you count, the `kube-system` list has eight Pods and there are nine *shims*. The ninth Pod is not in that namespace: kind also installs `local-path-provisioner`, in `local-path-storage` (0.6.2; Lesson 8 shows it with `kubectl get pods -n local-path-storage`). It is a deduction, because this tour did not list `kubectl get pods -A`; with that command on your cluster, the count adds up. (The name `kube-controller` appears cut off because `ps` shows only the first fifteen characters of the program name.)
 
 #### 0.3.4 The chicken and the egg
 
@@ -403,10 +406,10 @@ Almost everything you know from Docker has an equivalent in Kubernetes. It is no
 | `--restart always` | the **Deployment** and its ReplicaSet, which replace missing Pods on a node where they fit | Lesson 2 |
 | `docker compose up --scale revisor=3` | `replicas: 3` in the Deployment | Lesson 2 |
 | `-p 8080:8080` | a **Service**, and `kubectl port-forward` to test from your machine | Lesson 3 |
-| the service name on Compose's network | the **cluster DNS**: `revisor.<namespace>.svc` | Lesson 3 |
+| the service name on Compose's network | the **cluster DNS**: `revisor.<namespace>.svc.cluster.local` (within the same namespace, `revisor` is enough) | Lesson 3 |
 | `-e` and `--env-file` | **ConfigMap** and **Secret** | Lesson 4 |
 | `HEALTHCHECK` in the Dockerfile | startup, readiness and liveness **probes** | Lesson 5 |
-| `--memory` and `--cpus` | `resources.requests` and `resources.limits` | Lesson 5 |
+| `--memory` and `--cpus` (the ceiling); `--memory-reservation` and `--cpu-shares` (a reservation and a relative weight, which guarantee nothing) | `resources.limits` (the ceiling) and `resources.requests` (what the *scheduler* reserves when it picks a node) | Lesson 5 |
 | `--user`, `--read-only`, `--cap-drop ALL` | `securityContext` | Lesson 2 |
 | a named volume | a **PersistentVolumeClaim** | Lesson 8 |
 | a container that runs and exits | a **Job**; on a schedule, a **CronJob** | Lesson 8 |
@@ -456,7 +459,7 @@ What is not the same is **what lies underneath**. This table is the one worth ke
 | That your service survives a machine going down | **In part** | `docker stop` on a node looks similar, but all three “nodes” share your machine, your disk and your kernel: if your computer goes down, everything goes down |
 | That your `NetworkPolicy` blocks traffic | **It depends** | the network (CNI) enforces it, not Kubernetes; Lesson 7 measures it live |
 | That your service handles a given load | **No** | the nodes share your processor and your memory; the numbers do not carry over to another machine |
-| That a `LoadBalancer` gives you a public IP | **No** | kind does not come with a load balancer; a separate component is needed ([Cloud Provider KIND](https://kind.sigs.k8s.io/docs/user/loadbalancer/)), and Lesson 6 verifies it |
+| That a `LoadBalancer` gives you a public IP | **No** | kind does not come with a load balancer; a separate component is needed. The kind guide proposes [Cloud Provider KIND](https://kind.sigs.k8s.io/docs/user/loadbalancer/); this course installs MetalLB inside the cluster, and Lesson 6 verifies it and explains why it does not use the other one |
 | That your data is safe | **No** | kind's default storage (a provisioner called `local-path-provisioner`, which kind installs when creating the cluster) stores data inside the node itself, which is a container on your machine; Lesson 8 measures what is lost and when |
 | That the control plane tolerates failures | **No** in this course | kind allows several control-plane nodes, but on a single machine that tests the configuration, not real fault tolerance |
 
@@ -528,7 +531,7 @@ A tag like `v1.37.0` can be moved by whoever publishes the image; a digest canno
 
 ### 0.8 What comes in the rest of the course
 
-All of the above is put into practice in the following lessons. Each one adds a piece to the `revisor` in the cluster:
+All of the above is put into practice in the following lessons. Each one adds a component to the `revisor` in the cluster:
 
 | Lesson | What is added | Which idea from this lesson it puts to work |
 |---|---|---|
@@ -540,7 +543,7 @@ All of the above is put into practice in the following lessons. Each one adds a 
 | 6 | Publishing to the outside | the `LoadBalancer` that kind does not include (0.6.2) |
 | 7 | Namespaces, permissions and network | the network that depends on the CNI (0.3.3 and 0.6.2) |
 | 8 | Data and tasks | storage that lives inside the node itself (0.6.2) |
-| 9 | Scaling and updating without downtime | another controller, the one that adjusts `replicas` for you |
+| 9 | Scaling and updating, measuring every outage | another controller, the one that adjusts `replicas` for you |
 | 10 | Everything in a single `kubectl apply -k` | the file as the truth (0.4) |
 
 ## The error you will see
@@ -607,7 +610,7 @@ All three together give the rule: a kind cluster is well protected **toward the 
 
 ## Common mistakes
 
-**Deleting a Pod to “shut down” something.** The ReplicaSet replaces it in a second, as you saw in 0.2.4. To shut it down, you change the desired state (`replicas: 0`) or delete the Deployment.
+**Deleting a Pod to “shut down” something.** If a Deployment manages it, the ReplicaSet replaces it in a second, as you saw in 0.2.4. To shut it down, you change the desired state (`replicas: 0`) or delete the Deployment.
 
 **Running imperative commands on something managed with files.** A `kubectl scale` or a `kubectl edit` on an object that lives in Git lasts until the next `apply`, and the next person who applies will not know it existed. If the change is worth keeping, you make it in the file.
 
@@ -619,7 +622,7 @@ All three together give the rule: a kind cluster is well protected **toward the 
 
 **Trusting the green checkmark.** `kind create cluster` printed `✓ Joining worker nodes` with two nodes that never managed to join (0.6.3). After creating something, you look at its state.
 
-**Typing a Pod's name by hand.** The suffix is random and changes every time the Pod is reborn. You look it up by label (`-l app=...`).
+**Relying on a Pod's name.** The suffix is random and changes every time the Pod is reborn. You look it up by label (`-l app=...`) and, if a command asks for the name, you take it from that lookup.
 
 **Copying a tutorial without looking at the date.** Kubernetes changes three times a year. What was retired stays on the internet: tutorials that install Docker inside the nodes (dockershim was removed in 1.24) or that use `ingress-nginx`, which the Kubernetes project retired in March 2026: no new releases and no security fixes ([kubernetes.io, “Ingress NGINX Retirement”](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/)). Lesson 6 explains what is used instead.
 

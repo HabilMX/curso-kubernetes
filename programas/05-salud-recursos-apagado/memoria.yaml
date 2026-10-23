@@ -1,0 +1,32 @@
+# memoria.yaml — Lección 5: el OOMKilled a propósito.
+# El revisor en reposo usa menos de 5 MiB (medido: con un límite de 5Mi corre
+# sin problema, y con 4Mi ni siquiera arranca: StartError). Para ver un
+# OOMKilled de verdad hace falta un proceso que PIDA memoria: este Pod intenta
+# guardar 40 MB en una variable con un límite de 16 MiB.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: memoria
+  labels:
+    app: memoria
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 100
+    runAsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: memoria
+    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    command: ["sh", "-c", "echo 'pidiendo 40 MB'; a=$(head -c 40000000 /dev/zero | tr '\\000' x); echo 'no debería llegar aquí'"]
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 100m, memory: 16Mi}
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]

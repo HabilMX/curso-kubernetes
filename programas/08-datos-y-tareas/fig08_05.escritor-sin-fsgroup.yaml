@@ -1,0 +1,38 @@
+# fig08_05.escritor-sin-fsgroup.yaml — Lección 8: un Pod que corre sin root (usuario 100,
+# grupo 101) e intenta escribir en el disco local de fig08_04, cuyo directorio es de root
+# con permiso 0755. Sin fsGroup, nadie le cambia el dueño al directorio: Permission denied.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: sin-fsgroup
+  namespace: revisor
+  labels:
+    app: escritor
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 100
+    runAsGroup: 101
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: escritor
+    image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+    command: ["sh", "-c", "id; ls -lnd /datos; echo hola > /datos/a.txt && ls -ln /datos"]
+    resources:
+      requests: {cpu: 10m, memory: 16Mi}
+      limits: {cpu: 100m, memory: 32Mi}
+    volumeMounts:
+    - name: datos
+      mountPath: /datos
+    securityContext:
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+      capabilities:
+        drop: ["ALL"]
+  volumes:
+  - name: datos
+    persistentVolumeClaim:
+      claimName: disco

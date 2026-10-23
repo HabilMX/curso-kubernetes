@@ -47,7 +47,7 @@ _data:_
 - O que aconteceu com os Pods quando mudei o `ConfigMap` por variável e quando o mudei por arquivo:
 - Com o Kustomize, quanto demorou o rollout:
 
-## Lição 5 — Verificação de saúde, recursos e desligamento ordenado
+## Lição 5 — Verificação de saúde (*health check*), recursos e desligamento ordenado
 
 _data:_
 
@@ -77,7 +77,7 @@ _data:_
 - O que se perdeu e o que não se perdeu ao apagar o Pod com e sem volume:
 - Quantas vezes o meu `CronJob` rodou e como conferi isso:
 
-## Lição 9 — Escalar e atualizar sem interrupções
+## Lição 9 — Escalar e atualizar medindo cada interrupção
 
 _data:_
 

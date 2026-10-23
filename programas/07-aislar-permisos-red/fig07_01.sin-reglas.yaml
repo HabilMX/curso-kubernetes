@@ -1,0 +1,31 @@
+# fig07_01.sin-reglas.yaml — FALLA A PROPÓSITO: un Deployment del revisor escrito
+# como en un tutorial cualquiera, SIN securityContext. La imagen ya corre sin ser
+# root (usuario 65532), pero el manifiesto no lo DECLARA. En el espacio «revisor»
+# (nivel restricted) el Deployment se crea con una advertencia y sus Pods no
+# nacen: el ReplicaSet registra FailedCreate. Se borra con kubectl delete -f.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sinreglas
+  labels:
+    app: sinreglas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sinreglas
+  template:
+    metadata:
+      labels:
+        app: sinreglas
+    spec:
+      containers:
+      - name: revisor
+        image: curso-docker-revisor:1.6.0
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: REVISOR_SERVICIOS
+          value: "prueba http://prueba:9000/ 2s"
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 32Mi}

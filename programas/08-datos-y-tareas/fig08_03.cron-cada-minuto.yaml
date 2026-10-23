@@ -1,0 +1,43 @@
+# fig08_03.cron-cada-minuto.yaml — Lección 8: un CronJob que corre cada minuto, para VER el
+# horario funcionando sin esperar cinco minutos. Pregunta a /salud (no necesita token) y
+# conserva los dos últimos Jobs buenos y el último malo. Se borra al terminar la sección.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: salud-cada-minuto
+  namespace: revisor
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 30
+      template:
+        metadata:
+          labels:
+            app: salud
+            acceso-revisor: permitido
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+          - name: salud
+            image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+            command: ["sh", "-c", "date -u +%T; curl -fsS -m 5 http://revisor/salud"]
+            resources:
+              requests: {cpu: 10m, memory: 16Mi}
+              limits: {cpu: 100m, memory: 32Mi}
+            securityContext:
+              allowPrivilegeEscalation: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: ["ALL"]

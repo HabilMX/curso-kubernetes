@@ -1,0 +1,49 @@
+# prueba-deployment.yaml — Lección 5: el servicio de prueba también se vigila
+# y tiene sus límites. La sonda de vida usa GET /modo y NO GET /: en modo «caido»
+# GET / responde 503 a propósito, y el clúster no debe matarlo por eso.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prueba
+  labels:
+    app: prueba
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prueba
+  template:
+    metadata:
+      labels:
+        app: prueba
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: prueba
+        image: curso-docker-prueba:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9000
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 32Mi
+        livenessProbe:
+          httpGet: {path: /modo, port: http}
+          periodSeconds: 10
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]

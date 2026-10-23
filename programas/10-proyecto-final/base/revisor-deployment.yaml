@@ -1,0 +1,109 @@
+# revisor-deployment.yaml — Lecciones 5 y 7: sondas, recursos y apagado ordenado.
+# /salud no consulta a nadie: si dependiera de «prueba», una caída de prueba
+# reiniciaría el revisor, que no tiene la culpa.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: revisor
+  labels:
+    app: revisor
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: revisor
+  template:
+    metadata:
+      labels:
+        app: revisor
+    spec:
+      serviceAccountName: revisor
+      automountServiceAccountToken: false
+      # 5 s de preStop + hasta 5 s de apagado del revisor (PlazoApagado) + margen
+      terminationGracePeriodSeconds: 15
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        # DoNotSchedule y no ScheduleAnyway: con la versión suave, el scheduler
+        # dejó las dos réplicas en el mismo nodo (medido). Honor excluye al nodo
+        # de control, que tiene un taint y nunca recibe réplicas.
+        whenUnsatisfiable: DoNotSchedule
+        nodeTaintsPolicy: Honor
+        labelSelector:
+          matchLabels:
+            app: revisor
+        # solo cuenta las réplicas de la MISMA versión: durante un rollout las
+        # viejas no estorban el reparto de las nuevas
+        matchLabelKeys:
+        - pod-template-hash
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: revisor
+        image: curso-docker-revisor:1.6.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: REVISOR_SERVICIOS
+          valueFrom:
+            configMapKeyRef:
+              name: revisor-config
+              key: REVISOR_SERVICIOS
+        - name: REVISOR_TOKEN_ARCHIVO
+          value: /secretos/token
+        resources:
+          requests:
+            cpu: 50m
+            memory: 32Mi
+          limits:
+            cpu: 200m
+            memory: 64Mi
+        # Antes de recibir SIGTERM, el Pod espera 5 s: le da tiempo al clúster de
+        # sacarlo de los EndpointSlices. Sin esto, un rollout perdió 1 de 385
+        # peticiones (medido). La imagen no tiene shell: por eso «sleep» nativo.
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 5
+        startupProbe:
+          httpGet: {path: /salud, port: http}
+          periodSeconds: 1
+          failureThreshold: 10
+        readinessProbe:
+          httpGet: {path: /salud, port: http}
+          periodSeconds: 5
+          failureThreshold: 2
+        livenessProbe:
+          httpGet: {path: /salud, port: http}
+          periodSeconds: 10
+          failureThreshold: 3
+        volumeMounts:
+        - name: datos
+          mountPath: /datos
+        - name: token
+          mountPath: /secretos
+          readOnly: true
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+      volumes:
+      - name: datos
+        emptyDir:
+          sizeLimit: 10Mi
+      - name: token
+        secret:
+          secretName: revisor-token
+          defaultMode: 0440

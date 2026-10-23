@@ -1,0 +1,33 @@
+# overlays/ejemplo-nube — Lección 10: un overlay de EJEMPLO que solo se RENDERIZA
+# (kubectl kustomize); no se aplica a ningún clúster del curso. Muestra qué
+# cambiaría la misma base en un clúster de verdad: la imagen sale de un registro,
+# hay más réplicas y el reparto se hace por zona, no por nodo. No incluye la
+# plataforma de kind (MetalLB, rango, GatewayClass): en la nube eso lo da el
+# proveedor o el equipo de plataforma.
+# registry.example.com es un dominio reservado para ejemplos: no existe.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../base
+images:
+- name: curso-docker-revisor
+  newName: registry.example.com/equipo/revisor
+  newTag: "1.6.0"
+patches:
+- target:
+    kind: HorizontalPodAutoscaler
+    name: revisor
+  patch: |-
+    - op: replace
+      path: /spec/minReplicas
+      value: 3
+    - op: replace
+      path: /spec/maxReplicas
+      value: 10
+- target:
+    kind: Deployment
+    name: revisor
+  patch: |-
+    - op: replace
+      path: /spec/template/spec/topologySpreadConstraints/0/topologyKey
+      value: topology.kubernetes.io/zone

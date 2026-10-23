@@ -1,0 +1,42 @@
+# psa-control.yaml — Lección 10, 10.7.3: el CONTROL POSITIVO de la revisión contra
+# «restricted». Un espacio de prueba con DOS Pods: «viola» no dice nada de
+# seguridad (incumple restricted a propósito) y «cumple» sí cumple los seis
+# controles. Nace en el nivel «privileged», que lo acepta todo; la revisión le
+# pondrá «restricted» después, con los Pods ya vivos. Se borra al terminar.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: psa-control
+  labels:
+    pod-security.kubernetes.io/enforce: privileged
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: viola
+  namespace: psa-control
+spec:
+  containers:
+  - name: c
+    image: curso-docker-prueba:1.0.0
+    imagePullPolicy: IfNotPresent
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cumple
+  namespace: psa-control
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+  - name: c
+    image: curso-docker-prueba:1.0.0
+    imagePullPolicy: IfNotPresent
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]

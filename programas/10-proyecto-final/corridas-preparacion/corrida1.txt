@@ -1,0 +1,787 @@
+# corrida: 2026-10-21 09:45 CST · clúster curso-k8s-l10 · red de Docker curso-k8s-red-l10 (172.30.0.0/16) · kind v0.33.0 · kubectl v1.37.1
+
+## 10.1 La red y el cupo
+
+$ docker network inspect curso-k8s-red-l10 -f '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+172.30.0.0/16
+
+$ kind get clusters | grep -c '^curso-k8s-'
+2
+
+$ /bin/ls -l base/token.txt | cut -d' ' -f1
+-rw-------
+
+$ wc -c < base/token.txt
+      33
+
+## 10.4 Primer error: la plataforma sin --server-side
+(disco de Docker: 79 %)
+(crear el clúster, esperar a los nodos y cargar las imágenes tardó 66 s)
+
+$ cat $L10_TMP/crear.log
+Creating cluster "curso-k8s-l10" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+WARNING: Overriding docker network due to KIND_EXPERIMENTAL_DOCKER_NETWORK
+WARNING: Here be dragons! This is not supported currently.
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-curso-k8s-l10"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-curso-k8s-l10 --kubeconfig /tmp/curso-k8s-l10.ONgB/kubeconfig
+
+Have a nice day! 👋
+
+$ kubectl get nodes
+NAME                          STATUS   ROLES           AGE   VERSION
+curso-k8s-l10-control-plane   Ready    control-plane   49s   v1.37.0
+curso-k8s-l10-worker          Ready    <none>          30s   v1.37.0
+curso-k8s-l10-worker2         Ready    <none>          30s   v1.37.0
+
+$ kubectl get crd
+No resources found
+
+$ kubectl apply -k overlays/kind/plataforma > $L10_TMP/cliente.txt 2>&1; echo "código: $?"
+código: 1
+
+$ grep -c ' created$' $L10_TMP/cliente.txt
+73
+
+$ grep -v ' created$' $L10_TMP/cliente.txt | cut -c1-330
+Error from server (Invalid): error when creating "overlays/kind/plataforma": CustomResourceDefinition.apiextensions.k8s.io "envoyproxies.gateway.envoyproxy.io" is invalid: metadata.annotations: Too long: may not be more than 262144 bytes
+Error from server (Invalid): error when creating "overlays/kind/plataforma": CustomResourceDefinition.apiextensions.k8s.io "httproutes.gateway.networking.k8s.io" is invalid: metadata.annotations: Too long: may not be more than 262144 bytes
+Error from server (Invalid): error when creating "overlays/kind/plataforma": CustomResourceDefinition.apiextensions.k8s.io "securitypolicies.gateway.envoyproxy.io" is invalid: metadata.annotations: Too long: may not be more than 262144 bytes
+(borrar el clúster tardó 2 s)
+
+## 10.4 Segundo error: plataforma y proyecto en un solo comando
+(disco de Docker: 75 %)
+(crear el clúster, esperar a los nodos y cargar las imágenes tardó 68 s)
+
+$ kubectl apply --server-side -k fig10_01.todo-junto > $L10_TMP/junto1.txt 2>&1; echo "código: $?"
+código: 1
+
+$ grep -c serverside-applied $L10_TMP/junto1.txt
+99
+
+$ grep -v serverside-applied $L10_TMP/junto1.txt | cut -c1-330
+resource mapping not found for name: "revisor" namespace: "revisor" from "fig10_01.todo-junto": no matches for kind "Gateway" in version "gateway.networking.k8s.io/v1"
+ensure CRDs are installed first
+resource mapping not found for name: "eg" namespace: "" from "fig10_01.todo-junto": no matches for kind "GatewayClass" in version "gateway.networking.k8s.io/v1"
+ensure CRDs are installed first
+resource mapping not found for name: "revisor" namespace: "revisor" from "fig10_01.todo-junto": no matches for kind "HTTPRoute" in version "gateway.networking.k8s.io/v1"
+ensure CRDs are installed first
+resource mapping not found for name: "curso" namespace: "metallb-system" from "fig10_01.todo-junto": no matches for kind "IPAddressPool" in version "metallb.io/v1beta1"
+ensure CRDs are installed first
+resource mapping not found for name: "curso" namespace: "metallb-system" from "fig10_01.todo-junto": no matches for kind "L2Advertisement" in version "metallb.io/v1beta1"
+ensure CRDs are installed first
+
+# se repite el mismo comando, sin esperar nada entre uno y otro
+
+$ kubectl apply --server-side -k fig10_01.todo-junto > $L10_TMP/junto2.txt 2>&1; echo "código: $?"
+código: 1
+
+$ grep -c serverside-applied $L10_TMP/junto2.txt
+102
+
+$ grep -v serverside-applied $L10_TMP/junto2.txt | cut -c1-330
+Error from server (InternalError): Internal error occurred: failed calling webhook "ipaddresspoolvalidationwebhook.metallb.io": failed to call webhook: Post "https://metallb-webhook-service.metallb-system.svc:443/validate-metallb-io-v1beta1-ipaddresspool?timeout=10s": dial tcp 10.96.108.166:443: connect: connection refused
+Error from server (InternalError): Internal error occurred: failed calling webhook "l2advertisementvalidationwebhook.metallb.io": failed to call webhook: Post "https://metallb-webhook-service.metallb-system.svc:443/validate-metallb-io-v1beta1-l2advertisement?timeout=10s": dial tcp 10.96.108.166:443: connect: connection refused
+(borrar el clúster tardó 2 s)
+
+## 10.1 El clúster de la lección
+(disco de Docker: 77 %)
+(crear el clúster, esperar a los nodos y cargar las imágenes tardó 43 s)
+
+$ cat $L10_TMP/crear.log
+Creating cluster "curso-k8s-l10" ...
+ • Ensuring node image (kindest/node:v1.37.0) 🖼️  ...
+WARNING: Overriding docker network due to KIND_EXPERIMENTAL_DOCKER_NETWORK
+WARNING: Here be dragons! This is not supported currently.
+ ✓ Ensuring node image (kindest/node:v1.37.0) 🖼️
+ • Preparing nodes 📦 📦 📦   ...
+ ✓ Preparing nodes 📦 📦 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Joining worker nodes 🚜  ...
+ ✓ Joining worker nodes 🚜
+Set kubectl context to "kind-curso-k8s-l10"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-curso-k8s-l10 --kubeconfig /tmp/curso-k8s-l10.ONgB/kubeconfig
+
+Thanks for using kind! 😊
+
+$ kubectl config current-context
+kind-curso-k8s-l10
+
+$ kubectl get nodes
+NAME                          STATUS   ROLES           AGE   VERSION
+curso-k8s-l10-control-plane   Ready    control-plane   32s   v1.37.0
+curso-k8s-l10-worker          Ready    <none>          17s   v1.37.0
+curso-k8s-l10-worker2         Ready    <none>          17s   v1.37.0
+
+$ cat $L10_TMP/cargar.log
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l10-control-plane", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l10-worker", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l10-worker2", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l10-control-plane", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l10-worker", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l10-worker2", loading...
+
+$ kubectl get crd
+No resources found
+
+## 10.2 El mapa de la carpeta
+
+$ find base overlays -type f ! -name token.txt | sort
+base/.gitignore
+base/cuentas.yaml
+base/escalado.yaml
+base/gateway.yaml
+base/kustomization.yaml
+base/namespace.yaml
+base/prueba-deployment.yaml
+base/prueba-service.yaml
+base/red.yaml
+base/reporte.yaml
+base/revisor-deployment.yaml
+base/revisor-service.yaml
+overlays/ejemplo-nube/kustomization.yaml
+overlays/kind/gatewayclass.yaml
+overlays/kind/kustomization.yaml
+overlays/kind/metallb-pool.yaml
+overlays/kind/plataforma/envoy-gateway/kustomization.yaml
+overlays/kind/plataforma/kustomization.yaml
+overlays/kind/plataforma/metallb/kustomization.yaml
+overlays/kind/plataforma/metrics-server/kustomization.yaml
+
+## 10.3 Kustomize: base, overlays y lo que sale
+
+$ kubectl kustomize overlays/kind | grep '^kind:' | sort | uniq -c | sort -rn
+   6 kind: NetworkPolicy
+   4 kind: ServiceAccount
+   2 kind: Service
+   2 kind: Deployment
+   1 kind: Secret
+   1 kind: RoleBinding
+   1 kind: Role
+   1 kind: PodDisruptionBudget
+   1 kind: PersistentVolumeClaim
+   1 kind: Namespace
+   1 kind: L2Advertisement
+   1 kind: IPAddressPool
+   1 kind: HTTPRoute
+   1 kind: HorizontalPodAutoscaler
+   1 kind: GatewayClass
+   1 kind: Gateway
+   1 kind: CronJob
+   1 kind: ConfigMap
+
+$ kubectl kustomize overlays/kind | grep -c '^kind:'
+28
+
+$ diff <(kubectl kustomize overlays/kind) <(kubectl kustomize overlays/ejemplo-nube)
+229c229
+<         image: curso-docker-revisor:1.6.0
+---
+>         image: registry.example.com/equipo/revisor:1.6.0
+293c293
+<         topologyKey: kubernetes.io/hostname
+---
+>         topologyKey: topology.kubernetes.io/zone
+391c391
+<   maxReplicas: 6
+---
+>   maxReplicas: 10
+399c399
+<   minReplicas: 2
+---
+>   minReplicas: 3
+418,424d417
+< kind: GatewayClass
+< metadata:
+<   name: eg
+< spec:
+<   controllerName: gateway.envoyproxy.io/gatewayclass-controller
+< ---
+< apiVersion: gateway.networking.k8s.io/v1
+440,457d432
+< ---
+< apiVersion: metallb.io/v1beta1
+< kind: IPAddressPool
+< metadata:
+<   name: curso
+<   namespace: metallb-system
+< spec:
+<   addresses:
+<   - 172.30.255.200-172.30.255.250
+< ---
+< apiVersion: metallb.io/v1beta1
+< kind: L2Advertisement
+< metadata:
+<   name: curso
+<   namespace: metallb-system
+< spec:
+<   ipAddressPools:
+<   - curso
+[código de salida: 1]
+
+$ kubectl kustomize overlays/kind/plataforma | grep -c '^kind:'
+76
+
+$ kubectl kustomize overlays/kind/plataforma | grep -B1 -A1 'kubelet-insecure-tls'
+        - --metric-resolution=15s
+        - --kubelet-insecure-tls
+        image: registry.k8s.io/metrics-server/metrics-server:v0.9.0
+
+## 10.5 Levantar a mano: 1. la plataforma
+
+$ kubectl apply --server-side -k overlays/kind/plataforma > $L10_TMP/plataforma.txt; grep -c serverside-applied $L10_TMP/plataforma.txt
+76
+
+$ head -4 $L10_TMP/plataforma.txt
+namespace/envoy-gateway-system serverside-applied
+namespace/metallb-system serverside-applied
+customresourcedefinition.apiextensions.k8s.io/backends.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/backendtlspolicies.gateway.networking.k8s.io serverside-applied
+
+$ kubectl get crd | wc -l
+      31
+
+$ kubectl get pods -n metallb-system
+NAME                          READY   STATUS              RESTARTS   AGE
+controller-76f4cf76b7-svssm   0/1     ContainerCreating   0          1s
+speaker-d8hcp                 0/1     ContainerCreating   0          1s
+speaker-gqhr2                 0/1     ContainerCreating   0          1s
+speaker-l2gg2                 0/1     ContainerCreating   0          1s
+
+## 10.5 Levantar a mano: 2. la espera
+
+$ kubectl wait --for=condition=Established --timeout=120s crd/ipaddresspools.metallb.io crd/l2advertisements.metallb.io crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+
+$ kubectl wait --for=condition=Available --timeout=300s -n metallb-system deployment/controller
+deployment.apps/controller condition met
+
+$ kubectl rollout status --timeout=300s -n metallb-system daemonset/speaker
+Waiting for daemon set "speaker" rollout to finish: 0 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 1 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 2 of 3 updated pods are available...
+daemon set "speaker" successfully rolled out
+
+$ kubectl wait --for=condition=Available --timeout=300s -n envoy-gateway-system deployment/envoy-gateway
+deployment.apps/envoy-gateway condition met
+
+$ kubectl wait --for=condition=Available --timeout=300s -n kube-system deployment/metrics-server
+deployment.apps/metrics-server condition met
+(la espera tardó 298 s)
+
+# y cuando la condición NO llega: una espera con tope corto sobre algo que no va a pasar
+
+$ kubectl wait --for=condition=Available=false --timeout=5s -n envoy-gateway-system deployment/envoy-gateway
+error: timed out waiting for the condition on deployments/envoy-gateway
+[código de salida: 1]
+
+## 10.5 Levantar a mano: 3. el proyecto
+
+$ kubectl apply --server-side -k overlays/kind
+namespace/revisor serverside-applied
+serviceaccount/observador serverside-applied
+serviceaccount/prueba serverside-applied
+serviceaccount/reporte serverside-applied
+serviceaccount/revisor serverside-applied
+role.rbac.authorization.k8s.io/observador serverside-applied
+rolebinding.rbac.authorization.k8s.io/observador serverside-applied
+configmap/revisor-config-t6cm6872fk serverside-applied
+secret/revisor-token-t8tf8m8dgd serverside-applied
+service/prueba serverside-applied
+service/revisor serverside-applied
+persistentvolumeclaim/reportes serverside-applied
+deployment.apps/prueba serverside-applied
+deployment.apps/revisor serverside-applied
+cronjob.batch/reporte serverside-applied
+poddisruptionbudget.policy/revisor serverside-applied
+horizontalpodautoscaler.autoscaling/revisor serverside-applied
+gateway.gateway.networking.k8s.io/revisor serverside-applied
+gatewayclass.gateway.networking.k8s.io/eg serverside-applied
+httproute.gateway.networking.k8s.io/revisor serverside-applied
+ipaddresspool.metallb.io/curso serverside-applied
+l2advertisement.metallb.io/curso serverside-applied
+networkpolicy.networking.k8s.io/acceso-revisor-salida serverside-applied
+networkpolicy.networking.k8s.io/cerrado serverside-applied
+networkpolicy.networking.k8s.io/dns serverside-applied
+networkpolicy.networking.k8s.io/prueba-entrada serverside-applied
+networkpolicy.networking.k8s.io/revisor-entrada serverside-applied
+networkpolicy.networking.k8s.io/revisor-salida serverside-applied
+
+$ kubectl apply --server-side -k overlays/kind 2>&1 | grep -ci warning
+0
+[código de salida: 1]
+
+$ kubectl wait --for=condition=Available --timeout=300s -n revisor deployment/revisor deployment/prueba
+deployment.apps/revisor condition met
+deployment.apps/prueba condition met
+
+$ kubectl wait --for=condition=Programmed --timeout=300s -n revisor gateway/revisor
+gateway.gateway.networking.k8s.io/revisor condition met
+
+# espera (hasta 2 minutos) a que el HPA lea las métricas
+
+$ kubectl get all,pvc,cronjob,hpa,pdb,networkpolicy,gateway,httproute -n revisor
+NAME                          READY   STATUS      RESTARTS   AGE
+pod/prueba-6899c74865-rswxt   1/1     Running     0          50s
+pod/reporte-29876635-twpmv    0/1     Completed   0          39s
+pod/revisor-df9698f4d-2hqkb   1/1     Running     0          50s
+pod/revisor-df9698f4d-lfqxs   1/1     Running     0          50s
+
+NAME              TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)    AGE
+service/prueba    ClusterIP   10.96.32.79    <none>        9000/TCP   50s
+service/revisor   ClusterIP   10.96.35.124   <none>        80/TCP     50s
+
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           50s
+deployment.apps/revisor   2/2     2            2           50s
+
+NAME                                DESIRED   CURRENT   READY   AGE
+replicaset.apps/prueba-6899c74865   1         1         1       50s
+replicaset.apps/revisor-df9698f4d   2         2         2       50s
+
+NAME                                          REFERENCE            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/revisor   Deployment/revisor   cpu: 8%/50%   2         6         2          50s
+
+NAME                    SCHEDULE      TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+cronjob.batch/reporte   */5 * * * *   <none>     False     0        39s             50s
+
+NAME                         STATUS     COMPLETIONS   DURATION   AGE
+job.batch/reporte-29876635   Complete   1/1           37s        39s
+
+NAME                             STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+persistentvolumeclaim/reportes   Bound    pvc-fa8129fc-7829-462a-a8e6-a336425d9a27   100Mi      RWO            standard       <unset>                 50s
+
+NAME                                 MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+poddisruptionbudget.policy/revisor   1               N/A               1                     50s
+
+NAME                                                    POD-SELECTOR               AGE
+networkpolicy.networking.k8s.io/acceso-revisor-salida   acceso-revisor=permitido   49s
+networkpolicy.networking.k8s.io/cerrado                 <none>                     49s
+networkpolicy.networking.k8s.io/dns                     <none>                     49s
+networkpolicy.networking.k8s.io/prueba-entrada          app=prueba                 48s
+networkpolicy.networking.k8s.io/revisor-entrada         app=revisor                48s
+networkpolicy.networking.k8s.io/revisor-salida          app=revisor                48s
+
+NAME                                        CLASS   ADDRESS          PROGRAMMED   AGE
+gateway.gateway.networking.k8s.io/revisor   eg      172.30.255.200   True         50s
+
+NAME                                          HOSTNAMES   AGE
+httproute.gateway.networking.k8s.io/revisor               50s
+
+$ kubectl top pods -n revisor
+NAME                      CPU(cores)   MEMORY(bytes)   
+prueba-6899c74865-rswxt   1m           1Mi             
+revisor-df9698f4d-2hqkb   6m           1Mi             
+revisor-df9698f4d-lfqxs   2m           1Mi             
+
+$ curl -s -m 5 http://172.30.255.200/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.30.255.200/api/estados
+401
+
+$ curl -s -m 5 -H 'Authorization: Bearer $TOKEN' 'http://172.30.255.200/api/estados?formato=tabla'
+{"error":"falta el token o no es válido"}
+
+## 10.7 Revisión contra restricted
+
+$ kubectl label --dry-run=server --overwrite namespace revisor pod-security.kubernetes.io/enforce=restricted
+namespace/revisor not labeled (server dry run)
+
+$ kubectl get namespace revisor --show-labels
+NAME      STATUS   AGE   LABELS
+revisor   Active   52s   kubernetes.io/metadata.name=revisor,pod-security.kubernetes.io/audit-version=v1.37,pod-security.kubernetes.io/audit=restricted,pod-security.kubernetes.io/enforce-version=v1.37,pod-security.kubernetes.io/enforce=restricted,pod-security.kubernetes.io/warn-version=v1.37,pod-security.kubernetes.io/warn=restricted
+
+$ kubectl get pods -n revisor -o jsonpath='{range .items[*]}{.metadata.name}{" noroot="}{.spec.securityContext.runAsNonRoot}{" seccomp="}{.spec.securityContext.seccompProfile.type}{" priv-esc="}{.spec.containers[0].securityContext.allowPrivilegeEscalation}{" drop="}{.spec.containers[0].securityContext.capabilities.drop}{" ro="}{.spec.containers[0].securityContext.readOnlyRootFilesystem}{" automount="}{.spec.automountServiceAccountToken}{"\n"}{end}'
+prueba-6899c74865-rswxt noroot=true seccomp=RuntimeDefault priv-esc=false drop=["ALL"] ro=true automount=false
+reporte-29876635-twpmv noroot=true seccomp=RuntimeDefault priv-esc=false drop=["ALL"] ro=true automount=false
+revisor-df9698f4d-2hqkb noroot=true seccomp=RuntimeDefault priv-esc=false drop=["ALL"] ro=true automount=false
+revisor-df9698f4d-lfqxs noroot=true seccomp=RuntimeDefault priv-esc=false drop=["ALL"] ro=true automount=false
+
+$ kubectl label --dry-run=server --overwrite namespace envoy-gateway-system pod-security.kubernetes.io/enforce=restricted 2>&1 | cut -c1-300
+namespace/envoy-gateway-system labeled (server dry run)
+
+$ kubectl label --dry-run=server --overwrite namespace metallb-system pod-security.kubernetes.io/enforce=restricted 2>&1 | cut -c1-300
+Warning: existing pods in namespace "metallb-system" violate the new PodSecurity enforce level "restricted:latest"
+Warning: controller-76f4cf76b7-svssm: unrestricted capabilities, seccompProfile
+Warning: speaker-d8hcp (and 2 other pods): host namespaces, hostPort, probe or lifecycle host, unrestricted capabilities, runAsNonRoot != true, seccompProfile
+namespace/metallb-system labeled (server dry run)
+
+$ kubectl label --dry-run=server --overwrite namespace kube-system pod-security.kubernetes.io/enforce=restricted 2>&1 | cut -c1-300
+Warning: existing pods in namespace "kube-system" violate the new PodSecurity enforce level "restricted:latest"
+Warning: coredns-559f6c778d-j492g (and 1 other pod): runAsNonRoot != true, seccompProfile
+Warning: etcd-curso-k8s-l10-control-plane (and 3 other pods): host namespaces, hostPort, probe or lifecycle host, allowPrivilegeEscalation != false, unrestricted capabilities, restricted volume types, runAsNonRoot != true
+Warning: kindnet-s9t4w (and 2 other pods): host namespaces, allowPrivilegeEscalation != false, unrestricted capabilities, restricted volume types, runAsNonRoot != true, seccompProfile
+Warning: kube-proxy-625c2 (and 2 other pods): host namespaces, privileged, allowPrivilegeEscalation != false, unrestricted capabilities, restricted volume types, runAsNonRoot != true, seccompProfile
+namespace/kube-system labeled (server dry run)
+
+$ kubectl apply -n revisor -f fig10_02.deployment-malo.yaml
+Warning: would violate PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "malo" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "malo" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "malo" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "malo" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+deployment.apps/malo created
+
+$ kubectl get deployment malo -n revisor
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+malo   0/1     0            0           9s
+
+$ kubectl get events -n revisor --field-selector reason=FailedCreate -o custom-columns=RAZON:.reason,MENSAJE:.message | cut -c1-400 | head -3
+RAZON          MENSAJE
+FailedCreate   Error creating: pods "malo-89fb7566-whbzg" is forbidden: violates PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "malo" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "malo" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "malo" must set securityContext.runAsNonR
+FailedCreate   Error creating: pods "malo-89fb7566-tmlvz" is forbidden: violates PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "malo" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "malo" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "malo" must set securityContext.runAsNonR
+
+$ kubectl delete -n revisor -f fig10_02.deployment-malo.yaml
+deployment.apps "malo" deleted from revisor namespace
+
+## 10.8 Meta 4: cambiar la lista de servicios hace el rollout solo
+
+$ kubectl get replicaset -n revisor -l app=revisor
+NAME                DESIRED   CURRENT   READY   AGE
+revisor-df9698f4d   2         2         2       61s
+
+$ kubectl get configmap -n revisor
+NAME                        DATA   AGE
+kube-root-ca.crt            1      61s
+revisor-config-t6cm6872fk   1      61s
+
+$ sed -i.bak 's#http://prueba:9000/ 2s#http://prueba:9000/ 1s#' base/kustomization.yaml; diff base/kustomization.yaml.bak base/kustomization.yaml
+29c29
+<   - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s
+---
+>   - REVISOR_SERVICIOS=prueba http://prueba:9000/ 1s
+[código de salida: 1]
+
+$ kubectl apply --server-side -k overlays/kind 2>&1 | grep -E 'configmap|deployment.apps/revisor'
+configmap/revisor-config-cmb662hmbh serverside-applied
+deployment.apps/revisor serverside-applied
+
+$ mv base/kustomization.yaml.bak base/kustomization.yaml && grep REVISOR_SERVICIOS base/kustomization.yaml
+  - REVISOR_SERVICIOS=prueba http://prueba:9000/ 2s
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get replicaset -n revisor -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-6687bff9f9   2         2         2       11s
+revisor-df9698f4d    0         0         0       73s
+
+$ kubectl get configmap -n revisor
+NAME                        DATA   AGE
+kube-root-ca.crt            1      73s
+revisor-config-cmb662hmbh   1      11s
+revisor-config-t6cm6872fk   1      73s
+
+# se vuelve a lo que dicen los archivos
+
+$ kubectl apply --server-side -k overlays/kind 2>&1 | grep -E 'configmap|deployment.apps/revisor'
+configmap/revisor-config-t6cm6872fk serverside-applied
+deployment.apps/revisor serverside-applied
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get replicaset -n revisor -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-6687bff9f9   0         0         0       17s
+revisor-df9698f4d    2         2         2       79s
+
+## 10.8 Meta 6: un Pod ajeno no habla con el revisor; la cuenta del revisor no puede nada
+
+$ kubectl apply -n revisor -f depurar.yaml -f intruso.yaml
+pod/depurar created
+pod/intruso created
+
+$ kubectl wait -n revisor --for=condition=Ready pod/depurar pod/intruso --timeout=180s
+pod/depurar condition met
+pod/intruso condition met
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 http://revisor/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl auth can-i get pods -n revisor --as=system:serviceaccount:revisor:revisor
+no
+[código de salida: 1]
+
+$ kubectl auth can-i get secrets -n revisor --as=system:serviceaccount:revisor:revisor
+no
+[código de salida: 1]
+
+$ kubectl auth can-i get pods -n revisor --as=system:serviceaccount:revisor:observador
+yes
+
+$ kubectl auth can-i delete pods -n revisor --as=system:serviceaccount:revisor:observador
+no
+[código de salida: 1]
+
+## 10.8 Meta 3: se detiene un nodo de trabajo y el servicio sigue respondiendo
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS      RESTARTS   AGE   IP           NODE                    NOMINATED NODE   READINESS GATES
+revisor-6687bff9f9-vt7pf   0/1     Completed   0          26s   10.244.2.7   curso-k8s-l10-worker2   <none>           <none>
+revisor-df9698f4d-28np6    1/1     Running     0          13s   10.244.2.8   curso-k8s-l10-worker2   <none>           <none>
+revisor-df9698f4d-r7kt7    1/1     Running     0          17s   10.244.1.8   curso-k8s-l10-worker    <none>           <none>
+
+$ docker stop curso-k8s-l10-worker2
+curso-k8s-l10-worker2
+
+# una petición cada 2 s durante 90 s, con límite de 2 s cada una (se muestran los cambios)
+[+0s] FALLA
+[+13s] ok
+[+19s] FALLA
+[+23s] ok
+[+26s] FALLA
+[+30s] ok
+[+32s] FALLA
+[+36s] ok
+bien=30 mal=6
+
+$ kubectl get nodes
+NAME                          STATUS     ROLES           AGE     VERSION
+curso-k8s-l10-control-plane   Ready      control-plane   9m11s   v1.37.0
+curso-k8s-l10-worker          Ready      <none>          8m56s   v1.37.0
+curso-k8s-l10-worker2         NotReady   <none>          8m56s   v1.37.0
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                      READY   STATUS    RESTARTS   AGE    IP           NODE                    NOMINATED NODE   READINESS GATES
+revisor-df9698f4d-28np6   1/1     Running   0          114s   10.244.2.8   curso-k8s-l10-worker2   <none>           <none>
+revisor-df9698f4d-r7kt7   1/1     Running   0          118s   10.244.1.8   curso-k8s-l10-worker    <none>           <none>
+
+$ kubectl get endpointslices -n revisor -l kubernetes.io/service-name=revisor -o jsonpath='{range .items[0].endpoints[*]}{.addresses[0]}{" listo="}{.conditions.ready}{"\n"}{end}'
+10.244.1.8 listo=true
+10.244.2.8 listo=false
+
+$ docker start curso-k8s-l10-worker2
+curso-k8s-l10-worker2
+
+$ kubectl wait --for=condition=Ready node/curso-k8s-l10-worker2 --timeout=180s
+node/curso-k8s-l10-worker2 condition met
+
+$ kubectl get nodes
+NAME                          STATUS   ROLES           AGE     VERSION
+curso-k8s-l10-control-plane   Ready    control-plane   9m18s   v1.37.0
+curso-k8s-l10-worker          Ready    <none>          9m3s    v1.37.0
+curso-k8s-l10-worker2         Ready    <none>          9m3s    v1.37.0
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                      READY   STATUS    RESTARTS   AGE    IP           NODE                    NOMINATED NODE   READINESS GATES
+revisor-df9698f4d-28np6   1/1     Running   0          2m2s   10.244.2.8   curso-k8s-l10-worker2   <none>           <none>
+revisor-df9698f4d-r7kt7   1/1     Running   0          2m6s   10.244.1.8   curso-k8s-l10-worker    <none>           <none>
+
+## 10.8 Meta 5: el escalado lee métricas
+
+$ kubectl get hpa -n revisor
+NAME      REFERENCE            TARGETS              MINPODS   MAXPODS   REPLICAS   AGE
+revisor   Deployment/revisor   cpu: <unknown>/50%   2         6         2          3m19s
+
+## Ejercicio 1: un overlay propio
+
+$ kubectl kustomize fig10_03.overlay-mio | grep -n -E 'maxReplicas|minReplicas'
+391:  maxReplicas: 4
+399:  minReplicas: 2
+
+$ kubectl diff --server-side -k fig10_03.overlay-mio | grep -E '^[+-] +(max|min)Replicas'
+-  maxReplicas: 6
++  maxReplicas: 4
+[código de salida: 1]
+
+$ grep -c maxReplicas base/escalado.yaml
+1
+
+## Ejercicio 2: de «malo» a «restricted»
+
+$ kubectl apply -n revisor -f fig10_04.deployment-corregido.yaml 2>&1 | grep -ci warning
+0
+[código de salida: 1]
+
+$ kubectl apply -n revisor -f fig10_04.deployment-corregido.yaml
+deployment.apps/malo unchanged
+
+$ kubectl wait -n revisor --for=condition=Available deployment/malo --timeout=120s
+deployment.apps/malo condition met
+
+$ kubectl get deployment malo -n revisor
+NAME   READY   UP-TO-DATE   AVAILABLE   AGE
+malo   1/1     1            1           7s
+
+$ kubectl delete -n revisor -f fig10_04.deployment-corregido.yaml
+deployment.apps "malo" deleted from revisor namespace
+
+## Ejercicio 3: se detiene el plano de control
+
+$ docker stop curso-k8s-l10-control-plane
+curso-k8s-l10-control-plane
+
+$ kubectl get nodes --request-timeout=5s 2>&1 | cut -c1-200
+The connection to the server 127.0.0.1:63805 was refused - did you specify the right host or port?
+[código de salida: 1]
+
+$ curl -s -m 5 http://172.30.255.200/salud
+[código de salida: 7]
+
+$ curl -s -m 5 -H 'Authorization: Bearer $TOKEN' 'http://172.30.255.200/api/estados?formato=tabla'
+[código de salida: 7]
+
+$ docker start curso-k8s-l10-control-plane
+curso-k8s-l10-control-plane
+(la API volvió a contestar 18 s después de detener el nodo de control)
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=240s
+node/curso-k8s-l10-control-plane condition met
+node/curso-k8s-l10-worker condition met
+node/curso-k8s-l10-worker2 condition met
+
+$ kubectl get nodes
+NAME                          STATUS   ROLES           AGE     VERSION
+curso-k8s-l10-control-plane   Ready    control-plane   9m58s   v1.37.0
+curso-k8s-l10-worker          Ready    <none>          9m43s   v1.37.0
+curso-k8s-l10-worker2         Ready    <none>          9m43s   v1.37.0
+
+$ kubectl get pods -n revisor -o wide
+NAME                      READY   STATUS      RESTARTS      AGE     IP            NODE                    NOMINATED NODE   READINESS GATES
+depurar                   1/1     Running     0             2m40s   10.244.1.9    curso-k8s-l10-worker    <none>           <none>
+intruso                   1/1     Running     0             2m40s   10.244.1.10   curso-k8s-l10-worker    <none>           <none>
+prueba-6899c74865-rswxt   1/1     Running     1 (46s ago)   3m59s   10.244.2.2    curso-k8s-l10-worker2   <none>           <none>
+reporte-29876635-twpmv    0/1     Completed   0             3m48s   10.244.1.6    curso-k8s-l10-worker    <none>           <none>
+revisor-df9698f4d-28np6   1/1     Running     1 (46s ago)   2m42s   10.244.2.3    curso-k8s-l10-worker2   <none>           <none>
+revisor-df9698f4d-r7kt7   1/1     Running     0             2m46s   10.244.1.8    curso-k8s-l10-worker    <none>           <none>
+
+## El proyecto sigue siendo lo que dicen los archivos
+
+$ kubectl delete -n revisor pod depurar intruso --wait=false
+pod "depurar" deleted from revisor namespace
+pod "intruso" deleted from revisor namespace
+
+$ kubectl diff --server-side -k overlays/kind > /dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+(la corrida de la lección, sin contar probar-levantar.sh, tardó 788 s)
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l10
+Deleting cluster "curso-k8s-l10" ...
+Deleted nodes: ["curso-k8s-l10-control-plane" "curso-k8s-l10-worker" "curso-k8s-l10-worker2"]
+(borrar el clúster tardó 3 s)
+
+$ kind get clusters | grep -c curso-k8s-l10
+0
+[código de salida: 1]
+
+## 10.6 probar-levantar.sh: crear, levantar, borrar, recrear y levantar otra vez
+
+## Vuelta 1: clúster recién creado
+(crear el clúster y cargar las imágenes tardó 52 s)
+
+$ ./levantar.sh kind-curso-k8s-l10
+== 0. La red: ¿el rango de MetalLB cae dentro de la red de los nodos?
+primer IP del rango: 172.30.255.200 · IP del nodo de control: 172.30.0.3
+== 1. Plataforma
+objetos aplicados: 76
+(paso 1 terminó a los 18 s)
+== 2. Esperar a la plataforma
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+deployment.apps/controller condition met
+Waiting for daemon set "speaker" rollout to finish: 0 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 1 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 2 of 3 updated pods are available...
+daemon set "speaker" successfully rolled out
+deployment.apps/envoy-gateway condition met
+deployment.apps/metrics-server condition met
+(paso 2 terminó a los 362 s)
+== 3. Proyecto
+objetos aplicados: 28
+deployment.apps/revisor condition met
+deployment.apps/prueba condition met
+gateway.gateway.networking.k8s.io/revisor condition met
+NAME      CLASS   ADDRESS          PROGRAMMED   AGE
+revisor   eg      172.30.255.200   True         32s
+(paso 3 terminó a los 396 s)
+(levantar.sh tardó 396 s)
+
+$ curl -s http://172.30.255.200/salud   # desde un contenedor fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+(clúster borrado)
+
+## Vuelta 2: clúster recién creado
+(crear el clúster y cargar las imágenes tardó 58 s)
+
+$ ./levantar.sh kind-curso-k8s-l10
+== 0. La red: ¿el rango de MetalLB cae dentro de la red de los nodos?
+primer IP del rango: 172.30.255.200 · IP del nodo de control: 172.30.0.2
+== 1. Plataforma
+objetos aplicados: 76
+(paso 1 terminó a los 33 s)
+== 2. Esperar a la plataforma
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+deployment.apps/controller condition met
+Waiting for daemon set "speaker" rollout to finish: 0 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 1 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 2 of 3 updated pods are available...
+daemon set "speaker" successfully rolled out
+deployment.apps/envoy-gateway condition met
+deployment.apps/metrics-server condition met
+(paso 2 terminó a los 439 s)
+== 3. Proyecto
+objetos aplicados: 28
+deployment.apps/revisor condition met
+deployment.apps/prueba condition met
+gateway.gateway.networking.k8s.io/revisor condition met
+NAME      CLASS   ADDRESS          PROGRAMMED   AGE
+revisor   eg      172.30.255.200   True         21s
+(paso 3 terminó a los 460 s)
+(levantar.sh tardó 460 s)
+
+$ curl -s http://172.30.255.200/salud   # desde un contenedor fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+(clúster borrado)
+(la corrida completa tardó 1766 s)

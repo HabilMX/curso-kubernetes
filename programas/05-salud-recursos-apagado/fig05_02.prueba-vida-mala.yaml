@@ -1,0 +1,51 @@
+# fig05_02.prueba-vida-mala.yaml — Ejercicio 2: el servicio de prueba con su sonda
+# de VIDA apuntando a GET / en lugar de GET /modo. Es el error de la escena en
+# pequeño: la sonda de vida pregunta algo que no dice si el proceso está vivo.
+# Pregunta: en modo «caido», ¿cuánto tarda en reiniciarse? Después del reinicio,
+# ¿en qué modo está? Se deshace con: kubectl apply -k .
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prueba
+  labels:
+    app: prueba
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prueba
+  template:
+    metadata:
+      labels:
+        app: prueba
+    spec:
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: prueba
+        image: curso-docker-prueba:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9000
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 32Mi
+        livenessProbe:
+          httpGet: {path: /, port: http}
+          periodSeconds: 10
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]

@@ -1,0 +1,46 @@
+# fig10_04.deployment-corregido.yaml — solución del Ejercicio 2: el mismo Deployment
+# de fig10_02.deployment-malo.yaml, ahora con todo lo que pide el nivel «restricted»
+# (y lo que el curso pide además: sin credenciales de la API, sistema de archivos
+# de solo lectura, piso y techo de recursos).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: malo
+  labels:
+    app: malo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: malo
+  template:
+    metadata:
+      labels:
+        app: malo
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: malo
+        image: curso-docker-prueba:1.0.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 9000
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 100m
+            memory: 32Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]

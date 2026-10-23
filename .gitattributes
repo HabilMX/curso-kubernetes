@@ -3,6 +3,7 @@ es/_*.md export-ignore
 
 # La lista de patrones se queda en GitLab: deletrea nombres internos y el
 # revisor no puede revisarse a si mismo (se excluye para no cazarse siempre).
+.publicable-prohibido.txt export-ignore
 .publicable-interno.txt export-ignore
 
 # GitHub mide el lenguaje del repositorio con Linguist, y los guiones que verifican

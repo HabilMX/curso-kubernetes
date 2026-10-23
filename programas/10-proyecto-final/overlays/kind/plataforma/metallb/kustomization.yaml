@@ -1,0 +1,8 @@
+# MetalLB v0.16.1 (modo nativo, capa 2), instalado SOLO en este clúster.
+# Es la versión que indica la guía de instalación de MetalLB (metallb.io/installation).
+# El archivo viene de internet cada vez que se aplica, fijado a la versión por la
+# ruta del lanzamiento.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- https://raw.githubusercontent.com/metallb/metallb/v0.16.1/config/manifests/metallb-native.yaml

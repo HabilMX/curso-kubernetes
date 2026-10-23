@@ -1,0 +1,45 @@
+# cuentas.yaml — Lección 7: cada carga con su cuenta, y ninguna con permisos que
+# no necesita. El revisor y prueba no le hablan a la API: cero permisos y sin
+# credenciales montadas. «observador» puede mirar y nada más.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: revisor
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prueba
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: observador
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: observador
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "services", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: observador
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: observador
+subjects:
+- kind: ServiceAccount
+  name: observador
+  namespace: revisor

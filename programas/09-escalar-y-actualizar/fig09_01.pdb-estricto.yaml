@@ -1,0 +1,13 @@
+# fig09_01.pdb-estricto.yaml — FALLA A PROPÓSITO: un PodDisruptionBudget que no deja
+# perder NI UNA réplica (minAvailable: 2 con solo 2 réplicas). Mientras exista,
+# «kubectl drain» no puede desalojar ningún Pod del revisor y se queda reintentando.
+# Se deshace con: kubectl apply -k .   (escalado.yaml trae el PDB bueno)
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: revisor
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: revisor

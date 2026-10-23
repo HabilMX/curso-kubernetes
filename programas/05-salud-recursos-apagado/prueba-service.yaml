@@ -1,0 +1,15 @@
+# prueba-service.yaml — Lección 3: el nombre «prueba» que el revisor consulta.
+apiVersion: v1
+kind: Service
+metadata:
+  name: prueba
+  labels:
+    app: prueba
+spec:
+  type: ClusterIP
+  selector:
+    app: prueba
+  ports:
+  - name: http
+    port: 9000
+    targetPort: http

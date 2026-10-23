@@ -1,0 +1,968 @@
+# corrida: 2026-10-21 17:07 CST · clúster curso-k8s-l9 · red curso-k8s-red-l9 (172.29.0.0/16) · kind v0.33.0 · kubectl v1.37.1
+# disco de Docker: 77% usado
+
+## 9.1 El clúster y el punto de partida
+
+$ kind create cluster --name curso-k8s-l9 --config kind-curso.yaml
+(crear el clúster y esperar a que estuviera listo tardó 37 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l9
+
+$ kubectl get nodes -o wide | awk '{print $1, $2, $5, $6}' | column -t
+NAME                        STATUS  VERSION  INTERNAL-IP
+curso-k8s-l9-control-plane  Ready   v1.37.0  172.29.0.2
+curso-k8s-l9-worker         Ready   v1.37.0  172.29.0.4
+curso-k8s-l9-worker2        Ready   v1.37.0  172.29.0.3
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-revisor:1.6.1 curso-docker-prueba:1.0.0 --name curso-k8s-l9
+(las tres imágenes, cargadas en los tres nodos)
+
+$ docker network inspect curso-k8s-red-l9 -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+172.29.0.0/16 
+
+$ ls -l token.txt | cut -c1-10
+-rw-------
+
+$ POOL_RANGO=172.29.255.200-172.29.255.250 ./preparar.sh
+## Paso 1: la plataforma
+
+$ kubectl apply -k infra/metallb >/dev/null
+
+$ kubectl apply --server-side -k infra/envoy-gateway >/dev/null
+
+## Paso 2: la espera
+
+$ kubectl wait --for=condition=Established crd/ipaddresspools.metallb.io crd/l2advertisements.metallb.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io condition met
+
+$ kubectl wait --for=condition=Available deployment/controller -n metallb-system --timeout=1200s
+deployment.apps/controller condition met
+
+$ kubectl rollout status daemonset/speaker -n metallb-system --timeout=1200s
+Waiting for daemon set "speaker" rollout to finish: 0 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 1 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 2 of 3 updated pods are available...
+daemon set "speaker" successfully rolled out
+
+$ kubectl wait --for=condition=Established crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+
+$ kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway-system --timeout=1200s
+deployment.apps/envoy-gateway condition met
+
+## Paso 3: la configuración de la plataforma, y el proyecto
+
+$ kubectl apply -f /tmp/curso-k8s-l9.wJDg/metallb-pool.Xbdv -f infra/gatewayclass.yaml
+ipaddresspool.metallb.io/curso created
+l2advertisement.metallb.io/curso created
+gatewayclass.gateway.networking.k8s.io/eg created
+
+$ kubectl wait --for=condition=Accepted gatewayclass/eg --timeout=120s
+gatewayclass.gateway.networking.k8s.io/eg condition met
+
+$ kubectl apply -k punto-de-partida >/dev/null
+
+$ kubectl rollout status deployment/revisor deployment/prueba -n revisor --timeout=600s
+Waiting for deployment "revisor" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 2 of 3 updated replicas are available...
+deployment "revisor" successfully rolled out
+deployment "prueba" successfully rolled out
+
+$ kubectl wait --for=condition=Programmed gateway/revisor -n revisor --timeout=1200s
+gateway.gateway.networking.k8s.io/revisor condition met
+(preparar.sh tardó 343 s)
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-67b97d67c9-fnpdj   1/1     Running   0          22s   10.244.2.6   curso-k8s-l9-worker2   <none>           <none>
+revisor-67b97d67c9-jfdw4   1/1     Running   0          22s   10.244.2.5   curso-k8s-l9-worker2   <none>           <none>
+revisor-67b97d67c9-tqffn   1/1     Running   0          22s   10.244.1.3   curso-k8s-l9-worker    <none>           <none>
+
+$ kubectl get deployment,hpa,pdb -n revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           22s
+deployment.apps/revisor   3/3     3            3           22s
+
+$ kubectl get gateway -n revisor
+NAME      CLASS   ADDRESS          PROGRAMMED   AGE
+revisor   eg      172.29.255.200   True         22s
+
+$ docker run --rm --network curso-k8s-red-l9 --name curso-k8s-l9-cliente curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 -s -m 5 http://172.29.255.200/salud
+{"estado":"vivo","version":"1.6.0"}
+
+## 9.2 Medir antes de escalar: metrics-server
+
+$ kubectl top nodes
+error: Metrics API not available
+[código de salida: 1]
+
+$ kubectl get apiservice v1beta1.metrics.k8s.io
+Error from server (NotFound): apiservices.apiregistration.k8s.io "v1beta1.metrics.k8s.io" not found
+[código de salida: 1]
+
+$ kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.9.0/components.yaml | tail -3
+service/metrics-server created
+deployment.apps/metrics-server created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+(espera visible: hasta 600 s a que metrics-server descargue su imagen, arranque e intente leer a los kubelet)
+
+$ kubectl get deployment metrics-server -n kube-system
+NAME             READY   UP-TO-DATE   AVAILABLE   AGE
+metrics-server   0/1     1            0           30s
+
+$ kubectl logs -n kube-system deployment/metrics-server --tail=200 | grep -E 'x509|tls|certificate' | tail -1
+E1021 23:14:05.707527       1 scraper.go:149] "Failed to scrape node" err="Get \"https://172.29.0.2:10250/metrics/resource\": tls: failed to verify certificate: x509: cannot validate certificate for 172.29.0.2 because it doesn't contain any IP SANs" node="curso-k8s-l9-control-plane"
+
+$ kubectl top nodes
+error: Metrics API not available
+[código de salida: 1]
+
+$ kubectl get apiservice v1beta1.metrics.k8s.io
+NAME                     SERVICE                      AVAILABLE                  AGE
+v1beta1.metrics.k8s.io   kube-system/metrics-server   False (MissingEndpoints)   30s
+
+$ kubectl apply -k metrics-server | tail -3
+service/metrics-server unchanged
+deployment.apps/metrics-server configured
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io unchanged
+
+$ kubectl rollout status deployment/metrics-server -n kube-system --timeout=600s
+Waiting for deployment "metrics-server" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "metrics-server" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "metrics-server" rollout to finish: 1 old replicas are pending termination...
+deployment "metrics-server" successfully rolled out
+(espera de 45 s: metrics-server mide en ventanas y necesita un par de ellas)
+
+$ kubectl get apiservice v1beta1.metrics.k8s.io
+NAME                     SERVICE                      AVAILABLE   AGE
+v1beta1.metrics.k8s.io   kube-system/metrics-server   True        98s
+
+$ kubectl top nodes
+NAME                         CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)   
+curso-k8s-l9-control-plane   139m         2%       974Mi           6%          
+curso-k8s-l9-worker          92m          1%       272Mi           1%          
+curso-k8s-l9-worker2         53m          0%       316Mi           1%          
+
+$ kubectl top pods -n revisor
+NAME                       CPU(cores)   MEMORY(bytes)   
+prueba-6899c74865-cgzkw    1m           1Mi             
+revisor-67b97d67c9-fnpdj   1m           1Mi             
+revisor-67b97d67c9-jfdw4   1m           1Mi             
+revisor-67b97d67c9-tqffn   1m           1Mi             
+
+$ kubectl describe pod -n revisor -l app=revisor | grep -E 'Requests|cpu:' | head -4
+      cpu:     200m
+    Requests:
+      cpu:      50m
+      cpu:     200m
+
+## 9.5 Aplicar los cambios: autoescalador, reparto y apagado
+
+$ kubectl diff -k . | grep -E '^[+-] ' | grep -v -E 'creationTimestamp|generation|resourceVersion|uid:|managedFields'
+-  replicas: 3
++  replicas: 1
+-      maxSurge: 25%
+-      maxUnavailable: 25%
++      maxSurge: 1
++      maxUnavailable: 0
++        lifecycle:
++          preStop:
++            sleep:
++              seconds: 5
+-      terminationGracePeriodSeconds: 10
++      terminationGracePeriodSeconds: 15
++      topologySpreadConstraints:
++      - labelSelector:
++          matchLabels:
++            app: revisor
++        matchLabelKeys:
++        - pod-template-hash
++        maxSkew: 1
++        nodeTaintsPolicy: Honor
++        topologyKey: kubernetes.io/hostname
++        whenUnsatisfiable: DoNotSchedule
++  name: revisor
++  namespace: revisor
++  behavior:
++    scaleDown:
++      policies:
++      - periodSeconds: 15
++        type: Percent
++        value: 100
++      selectPolicy: Max
++      stabilizationWindowSeconds: 60
++    scaleUp:
++      policies:
++      - periodSeconds: 15
++        type: Pods
++        value: 4
++      - periodSeconds: 15
++        type: Percent
++        value: 100
++      selectPolicy: Max
++      stabilizationWindowSeconds: 0
++  maxReplicas: 6
++  metrics:
++  - resource:
++      name: cpu
++      target:
++        averageUtilization: 50
++        type: Utilization
++    type: Resource
++  minReplicas: 2
++  scaleTargetRef:
++    apiVersion: apps/v1
++    kind: Deployment
++    name: revisor
++  currentMetrics: null
++  desiredReplicas: 0
++  name: revisor
++  namespace: revisor
++  minAvailable: 1
++  selector:
++    matchLabels:
++      app: revisor
++  currentHealthy: 0
++  desiredHealthy: 0
++  disruptionsAllowed: 0
++  expectedPods: 0
+[código de salida: 1]
+
+$ kubectl apply -k . | grep -E 'horizontalpod|poddisruption|deployment'
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+poddisruptionbudget.policy/revisor created
+horizontalpodautoscaler.autoscaling/revisor created
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+(espera de 30 s: el HPA necesita su primera lectura de métricas)
+
+$ kubectl get hpa,pdb -n revisor
+NAME                                          REFERENCE            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/revisor   Deployment/revisor   cpu: 2%/50%   2         6         2          32s
+
+NAME                                 MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+poddisruptionbudget.policy/revisor   1               N/A               1                     32s
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,IMAGEN:.spec.containers[0].image,NODO:.spec.nodeName,BORRANDOSE:.metadata.deletionTimestamp
+POD                        IMAGEN                       NODO                   BORRANDOSE
+revisor-767bdf965b-5xvt5   curso-docker-revisor:1.6.0   curso-k8s-l9-worker2   <none>
+revisor-767bdf965b-857qf   curso-docker-revisor:1.6.0   curso-k8s-l9-worker    <none>
+
+$ kubectl get deployment revisor -n revisor -o jsonpath='{.spec.replicas}{"\n"}'
+2
+
+## 9.5.4 El error: el reparto sin nodeTaintsPolicy: Honor
+
+$ kubectl patch deployment/revisor -n revisor --type=json -p '[{"op":"remove","path":"/spec/template/spec/topologySpreadConstraints/0/nodeTaintsPolicy"}]'
+deployment.apps/revisor patched
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS        RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-574b5b6c4c-25h2z   1/1     Running       0          6s    10.244.1.9   curso-k8s-l9-worker    <none>           <none>
+revisor-574b5b6c4c-mnskb   1/1     Running       0          3s    10.244.2.9   curso-k8s-l9-worker2   <none>           <none>
+revisor-767bdf965b-5xvt5   1/1     Terminating   0          38s   10.244.2.8   curso-k8s-l9-worker2   <none>           <none>
+revisor-767bdf965b-857qf   1/1     Terminating   0          38s   10.244.1.8   curso-k8s-l9-worker    <none>           <none>
+
+$ kubectl scale deployment/revisor -n revisor --replicas=3
+deployment.apps/revisor scaled
+(espera de 6 s: el planificador decide en un instante)
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                   NOMINATED NODE   READINESS GATES
+revisor-574b5b6c4c-25h2z   1/1     Running   0          12s   10.244.1.9   curso-k8s-l9-worker    <none>           <none>
+revisor-574b5b6c4c-4nwx5   0/1     Pending   0          6s    <none>       <none>                 <none>           <none>
+revisor-574b5b6c4c-mnskb   1/1     Running   0          9s    10.244.2.9   curso-k8s-l9-worker2   <none>           <none>
+
+$ kubectl describe pod revisor-574b5b6c4c-4nwx5 -n revisor | sed -n '/Events:/,$p'
+Events:
+  Type     Reason            Age   From               Message
+  ----     ------            ----  ----               -------
+  Warning  FailedScheduling  6s    default-scheduler  0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 node(s) didn't match pod topology spread constraints. preemption: 0/3 nodes are available: 1 Preemption is not helpful for scheduling, 2 No preemption victims found for incoming pod.
+
+# --- La corrección: volver a aplicar la carpeta (trae Honor) ---
+
+$ kubectl apply -k . | grep -E 'deployment'
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS        RESTARTS   AGE   IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-574b5b6c4c-25h2z   1/1     Terminating   0          18s   10.244.1.9    curso-k8s-l9-worker    <none>           <none>
+revisor-574b5b6c4c-mnskb   1/1     Terminating   0          15s   10.244.2.9    curso-k8s-l9-worker2   <none>           <none>
+revisor-767bdf965b-5b6k9   1/1     Running       0          6s    10.244.1.10   curso-k8s-l9-worker    <none>           <none>
+revisor-767bdf965b-76td2   1/1     Running       0          2s    10.244.1.11   curso-k8s-l9-worker    <none>           <none>
+revisor-767bdf965b-vcznx   1/1     Running       0          4s    10.244.2.10   curso-k8s-l9-worker2   <none>           <none>
+(espera de 75 s: la ventana de bajada del autoescalador es de 60 s)
+
+$ kubectl get deployment,hpa -n revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           4m11s
+deployment.apps/revisor   2/2     2            2           4m11s
+
+NAME                                          REFERENCE            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/revisor   Deployment/revisor   cpu: 2%/50%   2         6         2          2m5s
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-767bdf965b-5b6k9   1/1     Running   0          82s   10.244.1.10   curso-k8s-l9-worker    <none>           <none>
+revisor-767bdf965b-vcznx   1/1     Running   0          80s   10.244.2.10   curso-k8s-l9-worker2   <none>           <none>
+
+## 9.6 Con carga, el autoescalador sube
+
+$ kubectl apply -f carga.yaml
+job.batch/carga created
+(espera visible: hasta 600 s a que los Pods de carga arranquen; la primera vez descargan la imagen de curl)
+
+$ kubectl wait --for=condition=Ready pod -l app=carga -n revisor --timeout=600s
+pod/carga-29s8s condition met
+pod/carga-bz6zl condition met
+pod/carga-nv5tb condition met
+pod/carga-rnhz5 condition met
+
+(un renglón del HPA cada 20 s, durante 200 s; empieza a las 17:18:00)
+[+ 20s] revisor   Deployment/revisor   cpu: 27%/50%   2     6     2     2m50s
+[+ 40s] revisor   Deployment/revisor   cpu: 46%/50%   2     6     2     3m10s
+[+ 60s] revisor   Deployment/revisor   cpu: 72%/50%   2     6     2     3m30s
+[+ 80s] revisor   Deployment/revisor   cpu: 58%/50%   2     6     3     3m51s
+[+100s] revisor   Deployment/revisor   cpu: 44%/50%   2     6     4     4m11s
+[+120s] revisor   Deployment/revisor   cpu: 46%/50%   2     6     4     4m31s
+[+140s] revisor   Deployment/revisor   cpu: 38%/50%   2     6     4     4m51s
+[+160s] revisor   Deployment/revisor   cpu: 38%/50%   2     6     4     5m11s
+[+180s] revisor   Deployment/revisor   cpu: 38%/50%   2     6     4     5m31s
+[+200s] revisor   Deployment/revisor   cpu: 38%/50%   2     6     4     5m52s
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE     IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-767bdf965b-4q7wh   1/1     Running   0          2m5s    10.244.2.13   curso-k8s-l9-worker2   <none>           <none>
+revisor-767bdf965b-5b6k9   1/1     Running   0          5m9s    10.244.1.10   curso-k8s-l9-worker    <none>           <none>
+revisor-767bdf965b-pchj4   1/1     Running   0          2m36s   10.244.1.14   curso-k8s-l9-worker    <none>           <none>
+revisor-767bdf965b-vcznx   1/1     Running   0          5m7s    10.244.2.10   curso-k8s-l9-worker2   <none>           <none>
+
+$ kubectl top pods -n revisor -l app=revisor
+NAME                       CPU(cores)   MEMORY(bytes)   
+revisor-767bdf965b-4q7wh   18m          6Mi             
+revisor-767bdf965b-5b6k9   19m          7Mi             
+revisor-767bdf965b-pchj4   20m          7Mi             
+revisor-767bdf965b-vcznx   20m          6Mi             
+
+$ kubectl get hpa revisor -n revisor -o jsonpath='réplicas={.status.currentReplicas} deseadas={.status.desiredReplicas} cpu={.status.currentMetrics[0].resource.current.averageUtilization} % ({.status.currentMetrics[0].resource.current.averageValue}){"\n"}'
+réplicas=4 deseadas=4 cpu=38 % (19m)
+
+$ kubectl describe hpa revisor -n revisor | sed -n '/Events:/,$p'
+Events:
+  Type     Reason                        Age                    From                       Message
+  ----     ------                        ----                   ----                       -------
+  Normal   SuccessfulRescale             5m54s                  horizontal-pod-autoscaler  New size: 2; reason: Current number of replicas below Spec.MinReplicas
+  Warning  FailedGetResourceMetric       4m54s (x3 over 5m39s)  horizontal-pod-autoscaler  failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Warning  FailedComputeMetricsReplicas  4m54s (x3 over 5m39s)  horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Normal   SuccessfulRescale             4m39s                  horizontal-pod-autoscaler  New size: 2; reason: All metrics below target
+  Normal   SuccessfulRescale             2m37s                  horizontal-pod-autoscaler  New size: 3; reason: cpu resource utilization (percentage of request) above target
+  Normal   SuccessfulRescale             2m7s                   horizontal-pod-autoscaler  New size: 4; reason: cpu resource utilization (percentage of request) above target
+
+## 9.7 Sin carga, baja, después de la ventana
+
+$ kubectl delete -f carga.yaml
+job.batch "carga" deleted from revisor namespace
+
+(un renglón del HPA cada 20 s, durante 260 s; empieza a las 17:21:25)
+[+ 20s] revisor   Deployment/revisor   cpu: 36%/50%   2     6     4     6m15s
+[+ 40s] revisor   Deployment/revisor   cpu: 39%/50%   2     6     4     6m35s
+[+ 60s] revisor   Deployment/revisor   cpu: 3%/50%   2     6     4     6m55s
+[+ 80s] revisor   Deployment/revisor   cpu: 2%/50%   2     6     4     7m15s
+[+100s] revisor   Deployment/revisor   cpu: 3%/50%   2     6     4     7m35s
+[+120s] revisor   Deployment/revisor   cpu: 2%/50%   2     6     2     7m56s
+[+140s] revisor   Deployment/revisor   cpu: 4%/50%   2     6     2     8m16s
+[+160s] revisor   Deployment/revisor   cpu: 2%/50%   2     6     2     8m36s
+[+180s] revisor   Deployment/revisor   cpu: 2%/50%   2     6     2     8m56s
+[+200s] revisor   Deployment/revisor   cpu: 4%/50%   2     6     2     9m16s
+[+220s] revisor   Deployment/revisor   cpu: 3%/50%   2     6     2     9m36s
+[+240s] revisor   Deployment/revisor   cpu: 2%/50%   2     6     2     9m56s
+[+260s] revisor   Deployment/revisor   cpu: 2%/50%   2     6     2     10m
+
+$ kubectl top pods -n revisor -l app=revisor
+NAME                       CPU(cores)   MEMORY(bytes)   
+revisor-767bdf965b-5b6k9   1m           6Mi             
+revisor-767bdf965b-vcznx   1m           5Mi             
+
+$ kubectl describe hpa revisor -n revisor | sed -n '/Conditions:/,/Events:/p'
+Conditions:
+  Type            Status  Reason            Message
+  ----            ------  ------            -------
+  AbleToScale     True    ReadyForNewScale  recommended size matches current size
+  ScaledToZero    False   NotScaledToZero   the HPA controller did not scale the workload to zero
+  ScalingActive   True    ValidMetricFound  the HPA was able to successfully calculate a replica count from cpu resource utilization (percentage of request)
+  ScalingLimited  True    TooFewReplicas    the desired replica count is less than the minimum replica count
+Events:
+
+$ kubectl describe hpa revisor -n revisor | sed -n '/Events:/,$p'
+Events:
+  Type     Reason                        Age                   From                       Message
+  ----     ------                        ----                  ----                       -------
+  Normal   SuccessfulRescale             10m                   horizontal-pod-autoscaler  New size: 2; reason: Current number of replicas below Spec.MinReplicas
+  Warning  FailedGetResourceMetric       9m17s (x3 over 10m)   horizontal-pod-autoscaler  failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Warning  FailedComputeMetricsReplicas  9m17s (x3 over 10m)   horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: no metrics returned from resource metrics API
+  Normal   SuccessfulRescale             7m                    horizontal-pod-autoscaler  New size: 3; reason: cpu resource utilization (percentage of request) above target
+  Normal   SuccessfulRescale             6m30s                 horizontal-pod-autoscaler  New size: 4; reason: cpu resource utilization (percentage of request) above target
+  Normal   SuccessfulRescale             2m54s                 horizontal-pod-autoscaler  New size: 3; reason: All metrics below target
+  Normal   SuccessfulRescale             2m39s (x2 over 9m2s)  horizontal-pod-autoscaler  New size: 2; reason: All metrics below target
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE     IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-767bdf965b-5b6k9   1/1     Running   0          9m33s   10.244.1.10   curso-k8s-l9-worker    <none>           <none>
+revisor-767bdf965b-vcznx   1/1     Running   0          9m31s   10.244.2.10   curso-k8s-l9-worker2   <none>           <none>
+
+## 9.8 Quién manda sobre las réplicas
+
+$ kubectl scale deployment/revisor -n revisor --replicas=1
+deployment.apps/revisor scaled
+(espera de 40 s)
+
+$ kubectl get deployment,hpa -n revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           13m
+deployment.apps/revisor   2/2     2            2           13m
+
+NAME                                          REFERENCE            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/revisor   Deployment/revisor   cpu: 2%/50%   2         6         2          10m
+
+$ kubectl describe hpa revisor -n revisor | sed -n '/Events:/,$p' | tail -3
+  Normal   SuccessfulRescale             3m34s                  horizontal-pod-autoscaler  New size: 3; reason: All metrics below target
+  Normal   SuccessfulRescale             3m19s (x2 over 9m42s)  horizontal-pod-autoscaler  New size: 2; reason: All metrics below target
+  Normal   SuccessfulRescale             33s (x2 over 10m)      horizontal-pod-autoscaler  New size: 2; reason: Current number of replicas below Spec.MinReplicas
+
+## 9.9 Actualizar y medir el corte
+
+$ kubectl wait --for=condition=Ready pod/depurar -n revisor --timeout=600s
+pod/depurar condition met
+
+$ kubectl get pod depurar -n revisor -o wide
+NAME      READY   STATUS    RESTARTS   AGE   IP            NODE                  NOMINATED NODE   READINESS GATES
+depurar   1/1     Running   0          1s    10.244.1.17   curso-k8s-l9-worker   <none>           <none>
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,IMAGEN:.spec.containers[0].image,NODO:.spec.nodeName,BORRANDOSE:.metadata.deletionTimestamp
+POD                        IMAGEN                       NODO                   BORRANDOSE
+revisor-767bdf965b-5b6k9   curso-docker-revisor:1.6.0   curso-k8s-l9-worker    <none>
+revisor-767bdf965b-sz25t   curso-docker-revisor:1.6.0   curso-k8s-l9-worker2   <none>
+
+# --- Sondeo base, 15 s sin tocar nada: 4 hilos, sin pausa ---
+
+$ ./sondeo.sh 15 0 4
+    172  código 200  curl rc=0  versión 1.6.0
+peticiones=172 fallidas=0
+
+# --- A. Rollout 1.6.0 -> 1.6.1 CON preStop (como está en la carpeta) ---
+
+$ ./sondeo.sh 45 0 4 &   # empieza a las 17:26:44
+(pausa de 3 s: que el sondeo ya esté corriendo)
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.1
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (A, con preStop):
+     56  código 200  curl rc=0  versión 1.6.0
+    416  código 200  curl rc=0  versión 1.6.1
+peticiones=472 fallidas=0
+
+$ kubectl exec -n revisor depurar -- curl -s http://revisor/salud
+{"estado":"vivo","version":"1.6.1"}
+
+# --- B. El mismo rollout, de ida y vuelta, SIN preStop (se quita con un patch) ---
+
+$ kubectl patch deployment/revisor -n revisor --type=json -p '[{"op":"remove","path":"/spec/template/spec/containers/0/lifecycle"}]'
+deployment.apps/revisor patched
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get deployment revisor -n revisor -o jsonpath='{.spec.template.spec.containers[0].lifecycle}{"|"}{.spec.template.spec.terminationGracePeriodSeconds}{"\n"}'
+|15
+
+$ ./sondeo.sh 45 0 4 &   # ronda 1, empieza a las 17:27:44
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.0
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (B, ronda 1, sin preStop, hacia 1.6.0):
+      2  código 000  curl rc=7  versión -
+      7  código 000  curl rc=28  versión -
+     51  código 200  curl rc=0  versión 1.6.1
+    403  código 200  curl rc=0  versión 1.6.0
+  segundos (desde el inicio) de las primeras fallas: +5 +5 +7 +7 +9 +9 +9 +9 +30
+peticiones=463 fallidas=9
+
+$ ./sondeo.sh 45 0 4 &   # ronda 2, empieza a las 17:28:30
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.1
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment spec update to be observed...
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (B, ronda 2, sin preStop, hacia 1.6.1):
+      1  código 000  curl rc=7  versión -
+      8  código 000  curl rc=28  versión -
+     47  código 200  curl rc=0  versión 1.6.0
+    465  código 200  curl rc=0  versión 1.6.1
+  segundos (desde el inicio) de las primeras fallas: +5 +7 +7 +8 +9 +9 +10 +10 +16
+peticiones=521 fallidas=9
+
+$ ./sondeo.sh 45 0 4 &   # ronda 3, empieza a las 17:29:15
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.0
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (B, ronda 3, sin preStop, hacia 1.6.0):
+      3  código 000  curl rc=7  versión -
+      8  código 000  curl rc=28  versión -
+    105  código 200  curl rc=0  versión 1.6.1
+    469  código 200  curl rc=0  versión 1.6.0
+  segundos (desde el inicio) de las primeras fallas: +5 +5 +5 +7 +7 +8 +8 +9 +10 +10 +10
+peticiones=585 fallidas=11
+
+# --- C. Se vuelve a aplicar la carpeta: el preStop regresa ---
+
+$ kubectl apply -k . | grep -E 'deployment|horizontal'
+deployment.apps/prueba unchanged
+deployment.apps/revisor configured
+horizontalpodautoscaler.autoscaling/revisor unchanged
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ ./sondeo.sh 45 0 4 &   # ronda 1, empieza a las 17:30:05
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.1
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (C, ronda 1, con preStop, hacia 1.6.1):
+      4  código 000  curl rc=28  versión -
+     57  código 200  curl rc=0  versión 1.6.0
+    471  código 200  curl rc=0  versión 1.6.1
+  segundos (desde el inicio) de las primeras fallas: +2 +2 +2 +2
+peticiones=532 fallidas=4
+
+$ ./sondeo.sh 45 0 4 &   # ronda 2, empieza a las 17:30:50
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.0
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (C, ronda 2, con preStop, hacia 1.6.0):
+     97  código 200  curl rc=0  versión 1.6.1
+    515  código 200  curl rc=0  versión 1.6.0
+peticiones=612 fallidas=0
+
+$ ./sondeo.sh 45 0 4 &   # ronda 3, empieza a las 17:31:35
+
+$ kubectl set image deployment/revisor -n revisor revisor=curso-docker-revisor:1.6.1
+deployment.apps/revisor image updated
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+# resultado del sondeo (C, ronda 3, con preStop, hacia 1.6.1):
+      1  código 000  curl rc=28  versión -
+     72  código 200  curl rc=0  versión 1.6.0
+    360  código 200  curl rc=0  versión 1.6.1
+  segundos (desde el inicio) de las primeras fallas: +25
+peticiones=433 fallidas=1
+
+## 9.10 Historial y rollout undo
+
+$ kubectl annotate deployment/revisor -n revisor kubernetes.io/change-cause='ronda de pruebas de la Leccion 9' --overwrite
+deployment.apps/revisor annotated
+
+$ kubectl rollout history deployment/revisor -n revisor
+deployment.apps/revisor 
+REVISION  CHANGE-CAUSE
+1         <none>
+3         <none>
+8         <none>
+9         <none>
+12        <none>
+13        ronda de pruebas de la Leccion 9
+
+
+$ kubectl get replicasets -n revisor -l app=revisor
+NAME                 DESIRED   CURRENT   READY   AGE
+revisor-574b5b6c4c   0         0         0       16m
+revisor-5978745747   0         0         0       4m33s
+revisor-5cc67d8975   2         2         2       5m33s
+revisor-67b97d67c9   0         0         0       18m
+revisor-767bdf965b   0         0         0       16m
+revisor-7f759cd976   0         0         0       4m51s
+(imagen actual: curso-docker-revisor:1.6.1)
+
+$ kubectl rollout undo deployment/revisor -n revisor
+Warning: resource deployments/revisor was previously managed with 'kubectl apply'. Rolling back will not update the kubectl.kubernetes.io/last-applied-configuration annotation, which may cause unexpected behavior on future 'kubectl apply' operations. Consider using 'kubectl apply' with your previous configuration file instead.
+deployment.apps/revisor rolled back
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,IMAGEN:.spec.containers[0].image,NODO:.spec.nodeName,BORRANDOSE:.metadata.deletionTimestamp
+POD                        IMAGEN                       NODO                   BORRANDOSE
+revisor-5cc67d8975-qbzsl   curso-docker-revisor:1.6.1   curso-k8s-l9-worker2   2026-10-21T23:32:40Z
+revisor-5cc67d8975-ttszb   curso-docker-revisor:1.6.1   curso-k8s-l9-worker    2026-10-21T23:32:37Z
+revisor-767bdf965b-58sd9   curso-docker-revisor:1.6.0   curso-k8s-l9-worker2   <none>
+revisor-767bdf965b-jzpxs   curso-docker-revisor:1.6.0   curso-k8s-l9-worker    <none>
+
+$ kubectl exec -n revisor depurar -- sh -c 'for i in 1 2 3 4 5 6; do curl -s http://revisor/salud; echo; done'
+{"estado":"vivo","version":"1.6.1"}
+
+{"estado":"vivo","version":"1.6.1"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.1"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.1"}
+
+(espera de 12 s: que termine el preStop de los Pods viejos)
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,IMAGEN:.spec.containers[0].image,NODO:.spec.nodeName,BORRANDOSE:.metadata.deletionTimestamp
+POD                        IMAGEN                       NODO                   BORRANDOSE
+revisor-767bdf965b-58sd9   curso-docker-revisor:1.6.0   curso-k8s-l9-worker2   <none>
+revisor-767bdf965b-jzpxs   curso-docker-revisor:1.6.0   curso-k8s-l9-worker    <none>
+
+$ kubectl exec -n revisor depurar -- sh -c 'for i in 1 2 3 4 5 6; do curl -s http://revisor/salud; echo; done'
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ kubectl rollout history deployment/revisor -n revisor --revision=1 | head -14
+deployment.apps/revisor with revision #1
+Pod Template:
+  Labels:	app=revisor
+	pod-template-hash=67b97d67c9
+  Service Account:	revisor
+  Containers:
+   revisor:
+    Image:	curso-docker-revisor:1.6.0
+    Port:	8080/TCP (http)
+    Host Port:	0/TCP (http)
+    Limits:
+      cpu:	200m
+      memory:	64Mi
+    Requests:
+
+$ kubectl apply -k . | grep -E 'deployment'
+deployment.apps/prueba unchanged
+deployment.apps/revisor unchanged
+
+## 9.11 PDB y mantenimiento de un nodo
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+deployment "revisor" successfully rolled out
+(espera de 20 s)
+
+$ kubectl get pods -n revisor -l app=revisor -o custom-columns=POD:.metadata.name,IMAGEN:.spec.containers[0].image,NODO:.spec.nodeName,BORRANDOSE:.metadata.deletionTimestamp
+POD                        IMAGEN                       NODO                   BORRANDOSE
+revisor-767bdf965b-58sd9   curso-docker-revisor:1.6.0   curso-k8s-l9-worker2   <none>
+revisor-767bdf965b-jzpxs   curso-docker-revisor:1.6.0   curso-k8s-l9-worker    <none>
+
+$ kubectl get pdb revisor -n revisor
+NAME      MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+revisor   1               N/A               1                     17m
+
+# --- El error: un PDB que no deja perder ninguna réplica ---
+
+$ kubectl apply -n revisor -f fig09_01.pdb-estricto.yaml
+poddisruptionbudget.policy/revisor configured
+
+$ kubectl get pdb revisor -n revisor
+NAME      MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+revisor   2               N/A               0                     17m
+(el nodo que se va a vaciar: curso-k8s-l9-worker2)
+
+$ kubectl drain curso-k8s-l9-worker2 --ignore-daemonsets --delete-emptydir-data --timeout=30s 2>&1 | grep -v -E '^(Warning: ignoring|evicting pod kube-system)'
+node/curso-k8s-l9-worker2 cordoned
+evicting pod revisor/prueba-6899c74865-cgzkw
+evicting pod metallb-system/controller-76f4cf76b7-m9mlh
+evicting pod revisor/revisor-767bdf965b-58sd9
+evicting pod envoy-gateway-system/envoy-revisor-revisor-b269644b-867f46cd7d-8fbvq
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+pod/controller-76f4cf76b7-m9mlh evicted
+pod/prueba-6899c74865-cgzkw evicted
+evicting pod revisor/revisor-767bdf965b-58sd9
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+evicting pod revisor/revisor-767bdf965b-58sd9
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+pod/envoy-revisor-revisor-b269644b-867f46cd7d-8fbvq evicted
+evicting pod revisor/revisor-767bdf965b-58sd9
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+evicting pod revisor/revisor-767bdf965b-58sd9
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+evicting pod revisor/revisor-767bdf965b-58sd9
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor" (will retry after 5s): Cannot evict pod as it would violate the pod's disruption budget.
+evicting pod revisor/revisor-767bdf965b-58sd9
+There are pending pods in node "curso-k8s-l9-worker2" when an error occurred: error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor": global timeout reached: 30s
+pod/revisor-767bdf965b-58sd9
+error: unable to drain node "curso-k8s-l9-worker2" due to error: error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor": global timeout reached: 30s, continuing command...
+There are pending nodes to be drained:
+ curso-k8s-l9-worker2
+error when evicting pods/"revisor-767bdf965b-58sd9" -n "revisor": global timeout reached: 30s
+[código de salida: 1]
+
+$ kubectl get nodes
+NAME                         STATUS                     ROLES           AGE   VERSION
+curso-k8s-l9-control-plane   Ready                      control-plane   26m   v1.37.0
+curso-k8s-l9-worker          Ready                      <none>          26m   v1.37.0
+curso-k8s-l9-worker2         Ready,SchedulingDisabled   <none>          26m   v1.37.0
+
+$ kubectl uncordon curso-k8s-l9-worker2
+node/curso-k8s-l9-worker2 uncordoned
+
+# --- La corrección: el PDB de la carpeta ---
+
+$ kubectl apply -k . | grep -E 'poddisruption'
+poddisruptionbudget.policy/revisor configured
+
+$ kubectl get pdb revisor -n revisor
+NAME      MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+revisor   1               N/A               1                     18m
+
+$ kubectl drain curso-k8s-l9-worker2 --ignore-daemonsets --delete-emptydir-data --timeout=120s 2>&1 | grep -v -E '^(Warning: ignoring|evicting pod kube-system)'
+node/curso-k8s-l9-worker2 cordoned
+evicting pod revisor/revisor-767bdf965b-58sd9
+pod/revisor-767bdf965b-58sd9 evicted
+node/curso-k8s-l9-worker2 drained
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE    IP            NODE                  NOMINATED NODE   READINESS GATES
+revisor-767bdf965b-28v89   1/1     Running   0          6s     10.244.1.32   curso-k8s-l9-worker   <none>           <none>
+revisor-767bdf965b-jzpxs   1/1     Running   0          109s   10.244.1.28   curso-k8s-l9-worker   <none>           <none>
+
+$ kubectl uncordon curso-k8s-l9-worker2
+node/curso-k8s-l9-worker2 uncordoned
+(espera de 30 s: ¿vuelve el reparto por sí solo?)
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE     IP            NODE                  NOMINATED NODE   READINESS GATES
+revisor-767bdf965b-28v89   1/1     Running   0          37s     10.244.1.32   curso-k8s-l9-worker   <none>           <none>
+revisor-767bdf965b-jzpxs   1/1     Running   0          2m20s   10.244.1.28   curso-k8s-l9-worker   <none>           <none>
+
+$ kubectl rollout restart deployment/revisor -n revisor
+deployment.apps/revisor restarted
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 2 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-5877db576c-8bn64   1/1     Running   0          12s   10.244.2.25   curso-k8s-l9-worker2   <none>           <none>
+revisor-5877db576c-mf7c2   1/1     Running   0          10s   10.244.1.33   curso-k8s-l9-worker    <none>           <none>
+
+## 9.12 Un nodo que se cae
+(depurar vive en curso-k8s-l9-worker2; el nodo que se apaga es curso-k8s-l9-worker, que sí tiene una réplica)
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE   IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-5877db576c-8bn64   1/1     Running   0          13s   10.244.2.25   curso-k8s-l9-worker2   <none>           <none>
+revisor-5877db576c-mf7c2   1/1     Running   0          11s   10.244.1.33   curso-k8s-l9-worker    <none>           <none>
+
+$ ./sondeo.sh 100 2 1 &                                     # sin reintentos, empieza a las 17:34:53
+$ ./sondeo.sh 100 2 1 --retry 3 --retry-all-errors &       # con reintentos
+(pausa de 10 s: ambos sondeos ya corren)
+
+$ docker stop curso-k8s-l9-worker
+curso-k8s-l9-worker
+(nodo apagado a las 17:35:04)
+(espera de 25 s: el nodo ya no contesta, pero el clúster todavía no lo sabe)
+[+ 25s desde docker stop] curso-k8s-l9-worker Ready
+
+$ kubectl get endpointslices -n revisor -l kubernetes.io/service-name=revisor -o jsonpath='{range .items[*].endpoints[*]}{.addresses[0]} ready={.conditions.ready} nodo={.nodeName}{"\n"}{end}'
+10.244.2.25 ready=true nodo=curso-k8s-l9-worker2
+10.244.1.33 ready=true nodo=curso-k8s-l9-worker
+(el nodo pasó a NotReady a los 57 s de docker stop)
+
+$ kubectl get endpointslices -n revisor -l kubernetes.io/service-name=revisor -o jsonpath='{range .items[*].endpoints[*]}{.addresses[0]} ready={.conditions.ready} nodo={.nodeName}{"\n"}{end}'
+10.244.2.25 ready=true nodo=curso-k8s-l9-worker2
+10.244.1.33 ready=false nodo=curso-k8s-l9-worker
+
+# resultado SIN reintentos (los segundos cuentan desde el inicio del sondeo; docker stop fue en +10):
+      7  código 000  curl rc=28  versión -
+     35  código 200  curl rc=0  versión 1.6.0
+  segundos (desde el inicio) de las primeras fallas: +21 +25 +29 +38 +42 +60 +64
+peticiones=42 fallidas=7
+
+# resultado CON reintentos de curl:
+      1  código 000  curl rc=28  versión -
+     31  código 200  curl rc=0  versión 1.6.0
+  segundos (desde el inicio) de las primeras fallas: +37
+peticiones=32 fallidas=1
+
+$ kubectl get nodes
+NAME                         STATUS     ROLES           AGE   VERSION
+curso-k8s-l9-control-plane   Ready      control-plane   29m   v1.37.0
+curso-k8s-l9-worker          NotReady   <none>          28m   v1.37.0
+curso-k8s-l9-worker2         Ready      <none>          28m   v1.37.0
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS   AGE    IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-5877db576c-8bn64   1/1     Running   0          114s   10.244.2.25   curso-k8s-l9-worker2   <none>           <none>
+revisor-5877db576c-mf7c2   1/1     Running   0          112s   10.244.1.33   curso-k8s-l9-worker    <none>           <none>
+
+$ docker start curso-k8s-l9-worker
+curso-k8s-l9-worker
+
+$ kubectl get nodes
+NAME                         STATUS   ROLES           AGE   VERSION
+curso-k8s-l9-control-plane   Ready    control-plane   29m   v1.37.0
+curso-k8s-l9-worker          Ready    <none>          28m   v1.37.0
+curso-k8s-l9-worker2         Ready    <none>          28m   v1.37.0
+
+$ kubectl get pods -n revisor -l app=revisor -o wide
+NAME                       READY   STATUS    RESTARTS      AGE     IP            NODE                   NOMINATED NODE   READINESS GATES
+revisor-5877db576c-8bn64   1/1     Running   0             2m16s   10.244.2.25   curso-k8s-l9-worker2   <none>           <none>
+revisor-5877db576c-mf7c2   1/1     Running   1 (21s ago)   2m14s   10.244.1.4    curso-k8s-l9-worker    <none>           <none>
+
+## Estado final
+
+$ kubectl diff -k . >/dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+
+$ kubectl get deployment,hpa,pdb -n revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           24m
+deployment.apps/revisor   2/2     2            2           24m
+
+NAME                                          REFERENCE            TARGETS              MINPODS   MAXPODS   REPLICAS   AGE
+horizontalpodautoscaler.autoscaling/revisor   Deployment/revisor   cpu: <unknown>/50%   2         6         2          21m
+
+NAME                                 MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
+poddisruptionbudget.policy/revisor   1               N/A               1                     21m
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l9
+Deleting cluster "curso-k8s-l9" ...
+Deleted nodes: ["curso-k8s-l9-control-plane" "curso-k8s-l9-worker2" "curso-k8s-l9-worker"]
+(borrar tardó 2 s)
+
+$ kind get clusters | grep -c curso-k8s-l9
+0
+
+# disco de Docker: 79% usado
+# la corrida completa tardó 1809 s

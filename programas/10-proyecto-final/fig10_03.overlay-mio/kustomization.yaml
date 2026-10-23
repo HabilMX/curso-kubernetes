@@ -1,0 +1,16 @@
+# fig10_03.overlay-mio/kustomization.yaml — solución del Ejercicio 1: un overlay
+# propio que parte del overlay de kind y cambia UNA cosa (el máximo de réplicas del
+# HPA, de 6 a 4) sin tocar la base. Se comprueba con:
+#   kubectl kustomize fig10_03.overlay-mio
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../overlays/kind
+patches:
+- target:
+    kind: HorizontalPodAutoscaler
+    name: revisor
+  patch: |-
+    - op: replace
+      path: /spec/maxReplicas
+      value: 4

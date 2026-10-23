@@ -1,0 +1,632 @@
+# corrida: 2026-10-21 08:50 CST · clúster curso-k8s-l6 · kind v0.33.0 · kubectl v1.37.1
+# disco de Docker: 65% usado
+
+## 6.0 El clúster de la lección
+
+$ kind create cluster --name curso-k8s-l6 --config kind-curso.yaml
+(crear el clúster y esperar a que estuviera listo tardó 40 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l6
+
+$ kubectl get nodes -o wide | awk '{print $1, $2, $5, $6}' | column -t
+NAME                        STATUS  VERSION  INTERNAL-IP
+curso-k8s-l6-control-plane  Ready   v1.37.0  172.18.0.4
+curso-k8s-l6-worker         Ready   v1.37.0  172.18.0.3
+curso-k8s-l6-worker2        Ready   v1.37.0  172.18.0.2
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l6
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l6-worker2", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l6-control-plane", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l6-worker", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l6-worker2", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l6-control-plane", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l6-worker", loading...
+
+$ docker network inspect kind -f '{{range .IPAM.Config}}{{.Subnet}} {{end}}'
+fc00:f853:ccd:e793::/64 172.18.0.0/16 
+
+## 6.1 El proyecto antes que la plataforma
+
+$ (umask 077; openssl rand -hex 16 > token.txt)
+
+$ ls -l token.txt | cut -c1-10
+-rw-------
+
+$ kubectl get crd
+No resources found
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-bmkbmd25cg created
+service/prueba created
+service/revisor created
+service/revisor-publico created
+deployment.apps/prueba created
+deployment.apps/revisor created
+resource mapping not found for name: "revisor" namespace: "" from ".": no matches for kind "Gateway" in version "gateway.networking.k8s.io/v1"
+ensure CRDs are installed first
+resource mapping not found for name: "revisor" namespace: "" from ".": no matches for kind "HTTPRoute" in version "gateway.networking.k8s.io/v1"
+ensure CRDs are installed first
+[código de salida: 1]
+
+$ kubectl api-resources --api-group=gateway.networking.k8s.io
+NAME   SHORTNAMES   APIVERSION   NAMESPACED   KIND
+
+## 6.2 Un LoadBalancer sin nadie que reparta direcciones
+(pausa de 5 s)
+
+$ kubectl get services
+NAME              TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+kubernetes        ClusterIP      10.96.0.1       <none>        443/TCP        36s
+prueba            ClusterIP      10.96.248.146   <none>        9000/TCP       7s
+revisor           ClusterIP      10.96.157.248   <none>        80/TCP         7s
+revisor-publico   LoadBalancer   10.96.115.79    <pending>     80:30808/TCP   7s
+
+$ kubectl describe service revisor-publico | grep -E '^(Type|LoadBalancer Ingress|Port|NodePort|Endpoints|Events):'
+Type:                     LoadBalancer
+Port:                     http  80/TCP
+NodePort:                 http  30808/TCP
+Endpoints:                10.244.2.3:8080,10.244.1.2:8080,10.244.2.4:8080
+Events:                   <none>
+(espera: el EndpointSlice de revisor-publico ya tiene 3 direcciones listas)
+
+$ curl -s -m 5 http://172.18.0.3:30808/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ curl -s -m 5 http://172.18.0.4:30808/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+## 6.3 MetalLB: quien reparte las direcciones, dentro del clúster
+
+$ kubectl apply -k infra/metallb | tail -5
+secret/metallb-webhook-cert created
+service/metallb-webhook-service created
+deployment.apps/controller created
+daemonset.apps/speaker created
+validatingwebhookconfiguration.admissionregistration.k8s.io/metallb-webhook-configuration created
+
+$ kubectl apply -f infra/metallb-pool.yaml
+Error from server (InternalError): error when creating "infra/metallb-pool.yaml": Internal error occurred: failed calling webhook "ipaddresspoolvalidationwebhook.metallb.io": failed to call webhook: Post "https://metallb-webhook-service.metallb-system.svc:443/validate-metallb-io-v1beta1-ipaddresspool?timeout=10s": dial tcp 10.96.93.252:443: connect: connection refused
+Error from server (InternalError): error when creating "infra/metallb-pool.yaml": Internal error occurred: failed calling webhook "l2advertisementvalidationwebhook.metallb.io": failed to call webhook: Post "https://metallb-webhook-service.metallb-system.svc:443/validate-metallb-io-v1beta1-l2advertisement?timeout=10s": dial tcp 10.96.93.252:443: connect: connection refused
+[código de salida: 1]
+
+$ kubectl get crd -o name | grep metallb.io
+customresourcedefinition.apiextensions.k8s.io/bfdprofiles.metallb.io
+customresourcedefinition.apiextensions.k8s.io/bgpadvertisements.metallb.io
+customresourcedefinition.apiextensions.k8s.io/bgppeers.metallb.io
+customresourcedefinition.apiextensions.k8s.io/communities.metallb.io
+customresourcedefinition.apiextensions.k8s.io/configurationstates.metallb.io
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io
+customresourcedefinition.apiextensions.k8s.io/servicebgpstatuses.metallb.io
+customresourcedefinition.apiextensions.k8s.io/servicel2statuses.metallb.io
+
+$ kubectl get validatingwebhookconfiguration metallb-webhook-configuration -o jsonpath='{.webhooks[*].failurePolicy}{"\n"}'
+Fail Fail Fail Fail Fail Fail
+
+$ kubectl wait --for=condition=Available deployment/controller -n metallb-system --timeout=240s
+deployment.apps/controller condition met
+
+$ kubectl rollout status daemonset/speaker -n metallb-system --timeout=240s
+Waiting for daemon set "speaker" rollout to finish: 0 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 1 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 2 of 3 updated pods are available...
+daemon set "speaker" successfully rolled out
+
+$ kubectl apply -f infra/metallb-pool.yaml
+ipaddresspool.metallb.io/curso created
+l2advertisement.metallb.io/curso created
+
+$ kubectl get pods -n metallb-system -o wide | awk '{print $1, $2, $3, $6, $7}' | column -t
+NAME                         READY  STATUS   IP          NODE
+controller-76f4cf76b7-hpzjj  1/1    Running  10.244.1.3  curso-k8s-l6-worker
+speaker-455xp                1/1    Running  172.18.0.3  curso-k8s-l6-worker
+speaker-jvbvh                1/1    Running  172.18.0.2  curso-k8s-l6-worker2
+speaker-xctwr                1/1    Running  172.18.0.4  curso-k8s-l6-control-plane
+
+$ kubectl get ipaddresspool,l2advertisement -n metallb-system
+NAME                             AUTO ASSIGN   AVOID BUGGY IPS   ADDRESSES
+ipaddresspool.metallb.io/curso   true          false             ["172.18.255.200-172.18.255.220"]
+
+NAME                               IPADDRESSPOOLS   IPADDRESSPOOL SELECTORS   INTERFACES
+l2advertisement.metallb.io/curso   ["curso"]                                  
+(pausa de 3 s)
+
+$ kubectl get service revisor-publico
+NAME              TYPE           CLUSTER-IP     EXTERNAL-IP      PORT(S)        AGE
+revisor-publico   LoadBalancer   10.96.115.79   172.18.255.200   80:30808/TCP   119s
+
+$ kubectl get events --field-selector involvedObject.name=revisor-publico --sort-by=.lastTimestamp | awk '{$1=""; print}' | sed 's/^ //'
+SEEN TYPE REASON OBJECT MESSAGE
+Normal IPAllocated service/revisor-publico Assigned IP ["172.18.255.200"]
+Normal nodeAssigned service/revisor-publico announcing from node "curso-k8s-l6-worker2" with protocol "layer2"
+
+$ curl -s -m 5 http://172.18.255.200/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ curl -s -m 5 -H 'Authorization: Bearer …' 'http://172.18.255.200/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           7ms  200
+
+## 6.4 Envoy Gateway: la plataforma de la puerta
+
+$ kubectl apply -k infra/envoy-gateway --dry-run=server 2>&1 | grep -c 'Too long'
+3
+[código de salida: 1]
+
+$ kubectl apply -k infra/envoy-gateway --dry-run=server 2>&1 | grep -m 1 'Too long' | sed 's/.*\(The CustomResourceDefinition\)/\1/'
+Error from server (Invalid): error when creating "infra/envoy-gateway": CustomResourceDefinition.apiextensions.k8s.io "envoyproxies.gateway.envoyproxy.io" is invalid: metadata.annotations: Too long: may not be more than 262144 bytes
+[código de salida: 1]
+
+$ kubectl apply --server-side -k infra/envoy-gateway | tail -4
+validatingadmissionpolicy.admissionregistration.k8s.io/safe-upgrades.gateway.networking.k8s.io serverside-applied
+validatingadmissionpolicybinding.admissionregistration.k8s.io/safe-upgrades.gateway.networking.k8s.io serverside-applied
+job.batch/eg-gateway-helm-certgen serverside-applied
+mutatingwebhookconfiguration.admissionregistration.k8s.io/envoy-gateway-topology-injector.envoy-gateway-system serverside-applied
+
+$ kubectl get crd -o name | grep -c gateway.networking.k8s.io
+10
+
+$ kubectl get crd -o name | grep -c gateway.envoyproxy.io
+8
+
+$ kubectl get crd -o name | grep gateway.networking.x-k8s.io
+customresourcedefinition.apiextensions.k8s.io/xbackends.gateway.networking.x-k8s.io
+customresourcedefinition.apiextensions.k8s.io/xbackendtrafficpolicies.gateway.networking.x-k8s.io
+customresourcedefinition.apiextensions.k8s.io/xmeshes.gateway.networking.x-k8s.io
+
+$ kubectl get crd -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.annotations.gateway\.networking\.k8s\.io/channel} {.metadata.annotations.gateway\.networking\.k8s\.io/bundle-version}{"\n"}{end}' | grep 'gateway.networking.k8s.io ' | column -t
+backendtlspolicies.gateway.networking.k8s.io  experimental  v1.6.1
+gatewayclasses.gateway.networking.k8s.io      experimental  v1.6.1
+gateways.gateway.networking.k8s.io            experimental  v1.6.1
+grpcroutes.gateway.networking.k8s.io          experimental  v1.6.1
+httproutes.gateway.networking.k8s.io          experimental  v1.6.1
+listenersets.gateway.networking.k8s.io        experimental  v1.6.1
+referencegrants.gateway.networking.k8s.io     experimental  v1.6.1
+tcproutes.gateway.networking.k8s.io           experimental  v1.6.1
+tlsroutes.gateway.networking.k8s.io           experimental  v1.6.1
+udproutes.gateway.networking.k8s.io           experimental  v1.6.1
+
+$ kubectl get mutatingwebhookconfiguration envoy-gateway-topology-injector.envoy-gateway-system -o jsonpath='{.webhooks[*].failurePolicy}{"\n"}'
+Ignore
+
+$ kubectl wait --for=condition=Established crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+
+$ kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway-system --timeout=300s
+deployment.apps/envoy-gateway condition met
+
+$ kubectl apply -f infra/gatewayclass.yaml
+gatewayclass.gateway.networking.k8s.io/eg created
+
+$ kubectl wait --for=condition=Accepted gatewayclass/eg --timeout=120s
+gatewayclass.gateway.networking.k8s.io/eg condition met
+
+$ kubectl get gatewayclass
+NAME   CONTROLLER                                      ACCEPTED   AGE
+eg     gateway.envoyproxy.io/gatewayclass-controller   True       0s
+
+$ kubectl api-resources --api-group=gateway.networking.k8s.io
+NAME                 SHORTNAMES   APIVERSION                     NAMESPACED   KIND
+backendtlspolicies   btlspolicy   gateway.networking.k8s.io/v1   true         BackendTLSPolicy
+gatewayclasses       gc           gateway.networking.k8s.io/v1   false        GatewayClass
+gateways             gtw          gateway.networking.k8s.io/v1   true         Gateway
+grpcroutes                        gateway.networking.k8s.io/v1   true         GRPCRoute
+httproutes                        gateway.networking.k8s.io/v1   true         HTTPRoute
+listenersets         lset         gateway.networking.k8s.io/v1   true         ListenerSet
+referencegrants      refgrant     gateway.networking.k8s.io/v1   true         ReferenceGrant
+tcproutes                         gateway.networking.k8s.io/v1   true         TCPRoute
+tlsroutes                         gateway.networking.k8s.io/v1   true         TLSRoute
+udproutes                         gateway.networking.k8s.io/v1   true         UDPRoute
+
+## 6.5 El proyecto, ahora sí
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk unchanged
+secret/revisor-token-bmkbmd25cg unchanged
+service/prueba unchanged
+service/revisor unchanged
+service/revisor-publico unchanged
+deployment.apps/prueba unchanged
+deployment.apps/revisor unchanged
+gateway.gateway.networking.k8s.io/revisor created
+httproute.gateway.networking.k8s.io/revisor created
+
+$ kubectl wait --for=condition=Programmed gateway/revisor --timeout=240s
+gateway.gateway.networking.k8s.io/revisor condition met
+
+$ kubectl get gateway,httproute
+NAME                                        CLASS   ADDRESS          PROGRAMMED   AGE
+gateway.gateway.networking.k8s.io/revisor   eg      172.18.255.201   True         113s
+
+NAME                                          HOSTNAMES   AGE
+httproute.gateway.networking.k8s.io/revisor               113s
+
+$ kubectl get httproute revisor -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'
+Accepted=True Accepted
+ResolvedRefs=True ResolvedRefs
+
+$ kubectl get pods,services -n envoy-gateway-system
+NAME                                                  READY   STATUS    RESTARTS   AGE
+pod/envoy-default-revisor-4e6f5d7f-55b49857bd-25dqk   2/2     Running   0          113s
+pod/envoy-gateway-5fc4949dcb-f8jss                    1/1     Running   0          5m44s
+
+NAME                                     TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                                            AGE
+service/envoy-default-revisor-4e6f5d7f   LoadBalancer   10.96.145.37    172.18.255.201   80:30581/TCP                                       113s
+service/envoy-gateway                    ClusterIP      10.96.233.233   <none>           18000/TCP,18001/TCP,18002/TCP,19001/TCP,9443/TCP   5m45s
+
+$ kubectl get services -A | grep -E 'NAMESPACE|LoadBalancer'
+NAMESPACE              NAME                             TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                                            AGE
+default                revisor-publico                  LoadBalancer   10.96.115.79    172.18.255.200   80:30808/TCP                                       8m21s
+envoy-gateway-system   envoy-default-revisor-4e6f5d7f   LoadBalancer   10.96.145.37    172.18.255.201   80:30581/TCP                                       113s
+(espera: la puerta ya contesta 200 en http://172.18.255.201/salud)
+
+$ curl -s -m 5 http://172.18.255.201/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ curl -s -m 5 -H 'Authorization: Bearer …' 'http://172.18.255.201/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK          13ms  200
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.18.255.201/api/estados
+401
+
+$ curl -s -m 5 -i http://172.18.255.201/salud | grep -iE "^(HTTP|server|content-type)"
+HTTP/1.1 200 OK
+content-type: application/json
+
+$ kubectl logs -l app=revisor --prefix --tail=-1 | grep 'GET /api/estados'
+[pod/revisor-5674f7c4cc-bhbvp/revisor] revisor: GET /api/estados 200 17ms
+[pod/revisor-5674f7c4cc-pbc9f/revisor] revisor: GET /api/estados 200 8ms
+[pod/revisor-5674f7c4cc-w7hgf/revisor] revisor: GET /api/estados 401 1ms
+
+## El error: una ruta hacia un Service que no existe
+
+$ kubectl apply -f fig06_01.ruta-mala.yaml
+httproute.gateway.networking.k8s.io/revisor configured
+(espera: la puerta ya contesta 500 en http://172.18.255.201/salud)
+
+$ curl -s -m 5 -i http://172.18.255.201/salud | grep -iE "^(HTTP|content-length)"
+HTTP/1.1 500 Internal Server Error
+content-length: 0
+
+$ kubectl get gateway revisor
+NAME      CLASS   ADDRESS          PROGRAMMED   AGE
+revisor   eg      172.18.255.201   True         2m1s
+
+$ kubectl get httproute revisor -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'
+Accepted=True Accepted
+ResolvedRefs=False BackendNotFound
+
+$ kubectl get httproute revisor -o jsonpath='{.status.parents[0].conditions[?(@.type=="ResolvedRefs")].message}{"\n"}'
+Failed to process route rule 0 backendRef 0: service default/revisr not found.
+
+$ kubectl get service revisr
+Error from server (NotFound): services "revisr" not found
+[código de salida: 1]
+
+$ kubectl apply -k . | grep httproute
+httproute.gateway.networking.k8s.io/revisor configured
+(espera: la puerta ya contesta 200 en http://172.18.255.201/salud)
+
+$ kubectl get httproute revisor -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {.reason}{"\n"}{end}'
+Accepted=True Accepted
+ResolvedRefs=True ResolvedRefs
+
+$ curl -s -m 5 http://172.18.255.201/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+## Hábito de seguridad: qué se expone y por dónde
+
+$ kubectl get services -A -o custom-columns='ESPACIO:.metadata.namespace,NOMBRE:.metadata.name,TIPO:.spec.type,IP-EXTERNA:.status.loadBalancer.ingress[0].ip,NODEPORT:.spec.ports[*].nodePort' | grep -E 'ESPACIO|LoadBalancer|NodePort'
+ESPACIO                NOMBRE                           TIPO           IP-EXTERNA       NODEPORT
+default                revisor-publico                  LoadBalancer   172.18.255.200   30808
+envoy-gateway-system   envoy-default-revisor-4e6f5d7f   LoadBalancer   172.18.255.201   30581
+
+$ docker port curso-k8s-l6-control-plane
+6443/tcp -> 127.0.0.1:59736
+
+$ docker port curso-k8s-l6-worker
+
+$ curl -s -m 3 http://172.18.255.201/salud
+[código de salida: 28]
+
+$ curl -s -m 5 https://172.18.255.201/salud
+[código de salida: 7]
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.18.255.201/api/estados -H 'Authorization: Bearer token-inventado'
+401
+
+## Ejercicio 1: soltar una dirección y volver a pedirla
+
+$ kubectl delete service revisor-publico
+service "revisor-publico" deleted from default namespace
+(pausa de 3 s)
+
+$ curl -s -m 3 http://172.18.255.200/salud
+[código de salida: 28]
+
+$ kubectl get services -A | grep -E 'NAMESPACE|LoadBalancer'
+NAMESPACE              NAME                             TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                                            AGE
+envoy-gateway-system   envoy-default-revisor-4e6f5d7f   LoadBalancer   10.96.145.37    172.18.255.201   80:30581/TCP                                       2m18s
+
+$ kubectl apply -k . | grep revisor-publico
+service/revisor-publico created
+(pausa de 5 s)
+
+$ kubectl get service revisor-publico
+NAME              TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)        AGE
+revisor-publico   LoadBalancer   10.96.129.166   172.18.255.200   80:31622/TCP   5s
+(espera: el EndpointSlice de revisor-publico ya tiene 3 direcciones listas)
+
+$ curl -s -m 5 http://172.18.255.200/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+## Ejercicio 2: la puerta, reducida a lo mínimo
+
+$ kubectl logs -l app=revisor --tail=-1 | grep -c -E 'GET /api/estados|GET /salud/ |POST /salud'
+4
+
+$ kubectl apply -f fig06_02.solo-salud.yaml
+httproute.gateway.networking.k8s.io/revisor configured
+(espera: la puerta ya contesta 404 en http://172.18.255.201/api/estados)
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.18.255.201/salud
+200
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer …' 'http://172.18.255.201/api/estados?formato=tabla'
+404
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.18.255.201/salud/
+404
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' -X POST http://172.18.255.201/salud
+404
+
+$ kubectl logs -l app=revisor --tail=-1 | grep -c -E 'GET /api/estados|GET /salud/ |POST /salud'
+4
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer …' 'http://172.18.255.200/api/estados?formato=tabla'
+200
+
+$ kubectl apply -k . | grep httproute
+httproute.gateway.networking.k8s.io/revisor configured
+(espera: la puerta ya contesta 401 en http://172.18.255.201/api/estados)
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.18.255.201/api/estados
+401
+
+## Ejercicio 3: un Ingress que nadie atiende
+
+$ kubectl get ingressclass
+No resources found
+
+$ kubectl apply -f fig06_03.ingress.yaml
+ingress.networking.k8s.io/revisor created
+(pausa de 15 s)
+
+$ kubectl get ingress revisor
+NAME      CLASS    HOSTS   ADDRESS   PORTS   AGE
+revisor   <none>   *                 80      16s
+
+$ kubectl describe ingress revisor | grep -E '^(Ingress Class|Address|Events):'
+Address:          
+Ingress Class:    <none>
+Events:       <none>
+
+$ kubectl delete -f fig06_03.ingress.yaml
+ingress.networking.k8s.io "revisor" deleted from default namespace
+
+## Cómo sé que lo logré: el estado final
+(espera: el EndpointSlice de revisor ya tiene 3 direcciones listas)
+
+$ kubectl diff -k . >/dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+
+$ kubectl get deployments,services,gateway,httproute
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           9m14s
+deployment.apps/revisor   3/3     3            3           9m14s
+
+NAME                      TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)        AGE
+service/kubernetes        ClusterIP      10.96.0.1       <none>           443/TCP        9m43s
+service/prueba            ClusterIP      10.96.248.146   <none>           9000/TCP       9m14s
+service/revisor           ClusterIP      10.96.157.248   <none>           80/TCP         9m14s
+service/revisor-publico   LoadBalancer   10.96.129.166   172.18.255.200   80:31622/TCP   27s
+
+NAME                                        CLASS   ADDRESS          PROGRAMMED   AGE
+gateway.gateway.networking.k8s.io/revisor   eg      172.18.255.201   True         2m46s
+
+NAME                                          HOSTNAMES   AGE
+httproute.gateway.networking.k8s.io/revisor               2m46s
+
+$ curl -s -m 5 http://172.18.255.201/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ curl -s -m 5 -H 'Authorization: Bearer …' 'http://172.18.255.201/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           5ms  200
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l6
+Deleting cluster "curso-k8s-l6" ...
+Deleted nodes: ["curso-k8s-l6-worker2" "curso-k8s-l6-control-plane" "curso-k8s-l6-worker"]
+(borrar tardó 1 s)
+
+$ kind get clusters | grep -c curso-k8s-l6
+0
+
+## 6.9 Los tres pasos, en un clúster nuevo (meta 1)
+
+$ kind create cluster --name curso-k8s-l6 --config kind-curso.yaml
+(crear el clúster otra vez y esperar a que estuviera listo tardó 46 s)
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l6
+(las dos imágenes, cargadas en los tres nodos)
+
+$ kubectl get crd
+No resources found
+
+$ ./levantar.sh
+## Paso 1: la plataforma
+
+$ kubectl apply -k infra/metallb
+namespace/metallb-system created
+customresourcedefinition.apiextensions.k8s.io/bfdprofiles.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/bgpadvertisements.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/bgppeers.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/communities.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/configurationstates.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/servicebgpstatuses.metallb.io created
+customresourcedefinition.apiextensions.k8s.io/servicel2statuses.metallb.io created
+serviceaccount/controller created
+serviceaccount/speaker created
+role.rbac.authorization.k8s.io/controller created
+role.rbac.authorization.k8s.io/pod-lister created
+clusterrole.rbac.authorization.k8s.io/metallb-system:controller created
+clusterrole.rbac.authorization.k8s.io/metallb-system:speaker created
+rolebinding.rbac.authorization.k8s.io/controller created
+rolebinding.rbac.authorization.k8s.io/pod-lister created
+clusterrolebinding.rbac.authorization.k8s.io/metallb-system:controller created
+clusterrolebinding.rbac.authorization.k8s.io/metallb-system:speaker created
+configmap/metallb-excludel2 created
+secret/metallb-webhook-cert created
+service/metallb-webhook-service created
+deployment.apps/controller created
+daemonset.apps/speaker created
+validatingwebhookconfiguration.admissionregistration.k8s.io/metallb-webhook-configuration created
+
+$ kubectl apply --server-side -k infra/envoy-gateway
+namespace/envoy-gateway-system serverside-applied
+customresourcedefinition.apiextensions.k8s.io/backends.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/backendtlspolicies.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/backendtrafficpolicies.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/clienttrafficpolicies.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/envoyextensionpolicies.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/envoypatchpolicies.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/envoyproxies.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/grpcroutes.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/httproutefilters.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/listenersets.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/referencegrants.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/securitypolicies.gateway.envoyproxy.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/tcproutes.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/tlsroutes.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/udproutes.gateway.networking.k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/xbackends.gateway.networking.x-k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/xbackendtrafficpolicies.gateway.networking.x-k8s.io serverside-applied
+customresourcedefinition.apiextensions.k8s.io/xmeshes.gateway.networking.x-k8s.io serverside-applied
+serviceaccount/eg-gateway-helm-certgen serverside-applied
+serviceaccount/envoy-gateway serverside-applied
+role.rbac.authorization.k8s.io/eg-gateway-helm-certgen serverside-applied
+role.rbac.authorization.k8s.io/eg-gateway-helm-infra-manager serverside-applied
+role.rbac.authorization.k8s.io/eg-gateway-helm-leader-election-role serverside-applied
+clusterrole.rbac.authorization.k8s.io/eg-gateway-helm-certgen:envoy-gateway-system serverside-applied
+clusterrole.rbac.authorization.k8s.io/eg-gateway-helm-envoy-gateway-role serverside-applied
+rolebinding.rbac.authorization.k8s.io/eg-gateway-helm-certgen serverside-applied
+rolebinding.rbac.authorization.k8s.io/eg-gateway-helm-infra-manager serverside-applied
+rolebinding.rbac.authorization.k8s.io/eg-gateway-helm-leader-election-rolebinding serverside-applied
+clusterrolebinding.rbac.authorization.k8s.io/eg-gateway-helm-certgen:envoy-gateway-system serverside-applied
+clusterrolebinding.rbac.authorization.k8s.io/eg-gateway-helm-envoy-gateway-rolebinding serverside-applied
+configmap/envoy-gateway-config serverside-applied
+service/envoy-gateway serverside-applied
+deployment.apps/envoy-gateway serverside-applied
+validatingadmissionpolicy.admissionregistration.k8s.io/safe-upgrades.gateway.networking.k8s.io serverside-applied
+validatingadmissionpolicybinding.admissionregistration.k8s.io/safe-upgrades.gateway.networking.k8s.io serverside-applied
+job.batch/eg-gateway-helm-certgen serverside-applied
+mutatingwebhookconfiguration.admissionregistration.k8s.io/envoy-gateway-topology-injector.envoy-gateway-system serverside-applied
+
+## Paso 2: la espera
+
+$ kubectl wait --for=condition=Established crd/ipaddresspools.metallb.io crd/l2advertisements.metallb.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/ipaddresspools.metallb.io condition met
+customresourcedefinition.apiextensions.k8s.io/l2advertisements.metallb.io condition met
+
+$ kubectl wait --for=condition=Available deployment/controller -n metallb-system --timeout=240s
+deployment.apps/controller condition met
+
+$ kubectl rollout status daemonset/speaker -n metallb-system --timeout=240s
+Waiting for daemon set "speaker" rollout to finish: 0 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 1 of 3 updated pods are available...
+Waiting for daemon set "speaker" rollout to finish: 2 of 3 updated pods are available...
+daemon set "speaker" successfully rolled out
+
+$ kubectl wait --for=condition=Established crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+
+$ kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway-system --timeout=300s
+deployment.apps/envoy-gateway condition met
+
+## Paso 3: la configuración de la plataforma, y el proyecto
+
+$ kubectl apply -f infra/metallb-pool.yaml -f infra/gatewayclass.yaml
+ipaddresspool.metallb.io/curso created
+l2advertisement.metallb.io/curso created
+gatewayclass.gateway.networking.k8s.io/eg created
+
+$ kubectl wait --for=condition=Accepted gatewayclass/eg --timeout=120s
+gatewayclass.gateway.networking.k8s.io/eg condition met
+
+$ kubectl apply -k .
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-bmkbmd25cg created
+service/prueba created
+service/revisor created
+service/revisor-publico created
+deployment.apps/prueba created
+deployment.apps/revisor created
+gateway.gateway.networking.k8s.io/revisor created
+httproute.gateway.networking.k8s.io/revisor created
+
+$ kubectl wait --for=condition=Programmed gateway/revisor --timeout=240s
+gateway.gateway.networking.k8s.io/revisor condition met
+(levantar.sh tardó 266 s)
+
+$ kubectl get gateway revisor
+NAME      CLASS   ADDRESS          PROGRAMMED   AGE
+revisor   eg      172.18.255.201   True         82s
+
+$ kubectl get service revisor-publico
+NAME              TYPE           CLUSTER-IP     EXTERNAL-IP      PORT(S)        AGE
+revisor-publico   LoadBalancer   10.96.165.26   172.18.255.200   80:31214/TCP   82s
+(espera: la puerta ya contesta 200 en http://172.18.255.201/salud)
+
+$ curl -s -m 5 http://172.18.255.201/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ curl -s -m 5 -H 'Authorization: Bearer …' 'http://172.18.255.201/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           3ms  200
+
+$ curl -s -m 5 http://172.18.255.200/salud
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ kind delete cluster --name curso-k8s-l6
+Deleting cluster "curso-k8s-l6" ...
+Deleted nodes: ["curso-k8s-l6-control-plane" "curso-k8s-l6-worker" "curso-k8s-l6-worker2"]
+
+$ kind get clusters | grep -c curso-k8s-l6
+0
+
+# disco de Docker: 78% usado
+# la corrida completa tardó 920 s

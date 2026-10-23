@@ -1,0 +1,40 @@
+# fig08_07.llenar-el-volumen.yaml — Lección 8: escribe 150 MB en un volumen que pidió 100Mi,
+# para ver si el clúster respeta el tamaño pedido. Usa el PVC «reportes» de la lección.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: llenar
+  namespace: revisor
+spec:
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: llenar
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        fsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: llenar
+        image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+        command: ["sh","-c","head -c 150000000 /dev/zero > /datos/grande.bin; ls -ln /datos; df -h /datos | tail -1"]
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 32Mi}
+        volumeMounts:
+        - {name: datos, mountPath: /datos}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities: {drop: ["ALL"]}
+      volumes:
+      - name: datos
+        persistentVolumeClaim:
+          claimName: reportes

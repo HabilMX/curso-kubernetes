@@ -77,7 +77,7 @@ _fecha:_
 - Qué se perdió y qué no al borrar el Pod con y sin volumen:
 - Cuántas veces corrió mi `CronJob` y cómo lo comprobé:
 
-## Lección 9 — Escalar y actualizar sin cortes
+## Lección 9 — Escalar y actualizar, midiendo cada corte
 
 _fecha:_
 

@@ -1,0 +1,37 @@
+# fig08_04.disco-local.yaml — Lección 8: un volumen creado a mano por «el administrador»,
+# como los de un clúster real. Un PersistentVolume de tipo local (una carpeta de UN nodo,
+# que hay que crear antes: mkdir -p /mnt/disco-reportes dentro del nodo curso-k8s-l8-worker)
+# y la solicitud (PersistentVolumeClaim) que lo reclama. Su clase «manual» no existe como
+# objeto: sirve solo de etiqueta para que la solicitud encuentre este volumen y no pida uno
+# nuevo a la clase por omisión.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: disco-reportes
+spec:
+  capacity:
+    storage: 100Mi
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  local:
+    path: /mnt/disco-reportes
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values: [curso-k8s-l8-worker]
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: disco
+  namespace: revisor
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: manual
+  resources:
+    requests:
+      storage: 100Mi

@@ -1,0 +1,23 @@
+# metallb-pool.yaml — las IP que MetalLB puede repartir a los Services LoadBalancer.
+# Salen de la red «kind» de Docker (en la máquina del contrato, 172.18.0.0/16;
+# compruébala con: docker network inspect kind). Se toma el final del rango, lejos
+# de las IP que Docker da a los nodos.
+# ⚠️ Dos clústeres de kind con MetalLB y el MISMO rango en la misma red se pisan
+# (los dos anuncian las mismas IP): en una máquina compartida, un rango por clúster.
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: curso
+  namespace: metallb-system
+spec:
+  addresses:
+  - 172.18.255.200-172.18.255.220
+---
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: curso
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - curso

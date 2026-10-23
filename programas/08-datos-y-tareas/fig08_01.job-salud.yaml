@@ -1,0 +1,37 @@
+# fig08_01.job-salud.yaml — Lección 8: el Job más pequeño que sirve. Una vez, le pregunta
+# a /salud del revisor y termina. Lleva la etiqueta acceso-revisor: permitido, la que la red
+# cerrada de la Lección 7 exige para que un Pod hable con el revisor.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: salud
+  namespace: revisor
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        app: salud
+        acceso-revisor: permitido
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: salud
+        image: curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777
+        command: ["curl", "-fsS", "-m", "5", "http://revisor/salud"]
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {cpu: 100m, memory: 32Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]

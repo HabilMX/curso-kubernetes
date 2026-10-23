@@ -1,0 +1,1115 @@
+# corrida: 2026-10-21 16:40 CST · clúster curso-k8s-l7 · red de Docker curso-k8s-red-l7 (172.27.0.0/16) · Docker 29.2.1 en Ubuntu 24.04.4 LTS (arm64) · kind v0.33.0 · kubectl v1.37.1
+# disco de Docker: 79% usado
+
+## 7.1 El clúster de la lección
+
+$ kind create cluster --name curso-k8s-l7 --config kind-curso.yaml
+
+$ kubectl wait --for=condition=Ready nodes --all --timeout=240s
+node/curso-k8s-l7-control-plane condition met
+node/curso-k8s-l7-worker condition met
+node/curso-k8s-l7-worker2 condition met
+
+$ kubectl wait --for=condition=Ready pods --all -n kube-system --timeout=240s
+pod/coredns-559f6c778d-q8k29 condition met
+pod/coredns-559f6c778d-xmf9c condition met
+pod/etcd-curso-k8s-l7-control-plane condition met
+pod/kindnet-82j5f condition met
+pod/kindnet-dpfv9 condition met
+pod/kindnet-mdcd7 condition met
+pod/kube-apiserver-curso-k8s-l7-control-plane condition met
+pod/kube-controller-manager-curso-k8s-l7-control-plane condition met
+pod/kube-proxy-d6hbh condition met
+pod/kube-proxy-kp6pk condition met
+pod/kube-proxy-sdh67 condition met
+pod/kube-scheduler-curso-k8s-l7-control-plane condition met
+(crear el clúster y esperar a que estuviera listo tardó 39 s)
+
+$ kubectl config current-context
+kind-curso-k8s-l7
+
+$ kubectl get nodes -o wide | awk '{print $1, $2, $3, $6}' | column -t
+NAME                        STATUS  ROLES          INTERNAL-IP
+curso-k8s-l7-control-plane  Ready   control-plane  172.27.0.4
+curso-k8s-l7-worker         Ready   <none>         172.27.0.2
+curso-k8s-l7-worker2        Ready   <none>         172.27.0.3
+
+$ kind load docker-image curso-docker-revisor:1.6.0 curso-docker-prueba:1.0.0 --name curso-k8s-l7
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l7-worker2", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l7-worker", loading...
+Image: "curso-docker-revisor:1.6.0" with ID "sha256:bd1b2e7d91b822f31b25e7ca52c4d0ccd5b81807695860bc13a7acf8169b2e59" not yet present on node "curso-k8s-l7-control-plane", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l7-worker2", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l7-worker", loading...
+Image: "curso-docker-prueba:1.0.0" with ID "sha256:400d3fd59edc9ceafa87d21e2fd0ab93f92e04701a38572c4d1c6960d79012db" not yet present on node "curso-k8s-l7-control-plane", loading...
+
+## 7.1.2 La plataforma de la Lección 6, en tres pasos
+
+$ kubectl apply -k infra/metallb | tail -2
+daemonset.apps/speaker created
+validatingwebhookconfiguration.admissionregistration.k8s.io/metallb-webhook-configuration created
+
+$ kubectl apply --server-side -k infra/envoy-gateway | tail -1
+mutatingwebhookconfiguration.admissionregistration.k8s.io/envoy-gateway-topology-injector.envoy-gateway-system serverside-applied
+
+$ kubectl wait --for=condition=Available deployment/controller -n metallb-system --timeout=240s
+deployment.apps/controller condition met
+
+$ kubectl rollout status daemonset/speaker -n metallb-system --timeout=480s | tail -1
+daemon set "speaker" successfully rolled out
+
+$ kubectl wait --for=condition=Established crd/gatewayclasses.gateway.networking.k8s.io crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io crd/referencegrants.gateway.networking.k8s.io --timeout=120s
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io condition met
+customresourcedefinition.apiextensions.k8s.io/referencegrants.gateway.networking.k8s.io condition met
+
+$ kubectl wait --for=condition=Available deployment/envoy-gateway -n envoy-gateway-system --timeout=300s
+deployment.apps/envoy-gateway condition met
+
+$ kubectl apply -f infra/metallb-pool.yaml -f infra/gatewayclass.yaml
+(en esta corrida el rango del archivo se cambió a 172.27.255.200-172.27.255.250, dentro de la red curso-k8s-red-l7)
+ipaddresspool.metallb.io/curso created
+l2advertisement.metallb.io/curso created
+gatewayclass.gateway.networking.k8s.io/eg created
+
+$ kubectl wait --for=condition=Accepted gatewayclass/eg --timeout=120s
+gatewayclass.gateway.networking.k8s.io/eg condition met
+(la plataforma tardó 411 s)
+
+## 7.1.3 El punto de partida: la Lección 6, en default
+
+$ (umask 077; openssl rand -hex 16 > punto-de-partida/token.txt)
+$ cp punto-de-partida/token.txt token.txt
+
+$ /bin/ls -l token.txt punto-de-partida/token.txt | awk '{print $1, $NF}'
+-rw------- punto-de-partida/token.txt
+-rw------- token.txt
+
+$ kubectl apply -k punto-de-partida
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-mgc44f554f created
+service/prueba created
+service/revisor created
+service/revisor-publico created
+deployment.apps/prueba created
+deployment.apps/revisor created
+gateway.gateway.networking.k8s.io/revisor created
+httproute.gateway.networking.k8s.io/revisor created
+
+$ kubectl rollout status deployment/revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 2 of 3 updated replicas are available...
+deployment "revisor" successfully rolled out
+
+$ kubectl rollout status deployment/prueba --timeout=180s
+deployment "prueba" successfully rolled out
+
+$ kubectl wait --for=condition=Programmed gateway/revisor --timeout=360s
+gateway.gateway.networking.k8s.io/revisor condition met
+
+$ kubectl get namespaces
+NAME                   STATUS   AGE
+default                Active   11m
+envoy-gateway-system   Active   11m
+kube-node-lease        Active   11m
+kube-public            Active   11m
+kube-system            Active   11m
+local-path-storage     Active   11m
+metallb-system         Active   11m
+
+$ kubectl get namespace default --show-labels
+NAME      STATUS   AGE   LABELS
+default   Active   11m   kubernetes.io/metadata.name=default
+
+$ kubectl get pod -l app=revisor -o jsonpath='{.items[0].spec.serviceAccountName} | {.items[0].spec.automountServiceAccountToken} | {.items[0].spec.volumes[*].name}{"\n"}'
+default |  | datos token kube-api-access-5q29h
+
+$ kubectl auth can-i --list --as=system:serviceaccount:default:default | head -4
+Resources                                       Non-Resource URLs                      Resource Names   Verbs
+selfsubjectreviews.authentication.k8s.io        []                                     []               [create]
+selfsubjectaccessreviews.authorization.k8s.io   []                                     []               [create]
+selfsubjectrulesreviews.authorization.k8s.io    []                                     []               [create]
+
+## 7.2 Un espacio de nombres propio: la mudanza
+
+$ kubectl api-resources --namespaced=false -o name | grep -E '^(nodes|namespaces|persistentvolumes|storageclasses|clusterroles|clusterrolebindings|gatewayclasses\.)'
+namespaces
+nodes
+persistentvolumes
+gatewayclasses.gateway.networking.k8s.io
+clusterrolebindings.rbac.authorization.k8s.io
+clusterroles.rbac.authorization.k8s.io
+storageclasses.storage.k8s.io
+
+$ kubectl api-resources --namespaced=true -o name | grep -E '^(pods|services|secrets|serviceaccounts|roles|rolebindings|networkpolicies)(\.|$)'
+pods
+secrets
+serviceaccounts
+services
+networkpolicies.networking.k8s.io
+rolebindings.rbac.authorization.k8s.io
+roles.rbac.authorization.k8s.io
+
+$ kubectl delete -k punto-de-partida
+configmap "revisor-config-t6cm6872fk" deleted from default namespace
+secret "revisor-token-mgc44f554f" deleted from default namespace
+service "prueba" deleted from default namespace
+service "revisor" deleted from default namespace
+service "revisor-publico" deleted from default namespace
+deployment.apps "prueba" deleted from default namespace
+deployment.apps "revisor" deleted from default namespace
+gateway.gateway.networking.k8s.io "revisor" deleted from default namespace
+httproute.gateway.networking.k8s.io "revisor" deleted from default namespace
+
+$ rm -f -- punto-de-partida/token.txt
+
+$ kubectl apply -k .
+namespace/revisor created
+serviceaccount/observador created
+serviceaccount/prueba created
+serviceaccount/revisor created
+role.rbac.authorization.k8s.io/observador created
+rolebinding.rbac.authorization.k8s.io/observador created
+configmap/revisor-config-t6cm6872fk created
+secret/revisor-token-mgc44f554f created
+service/prueba created
+service/revisor created
+deployment.apps/prueba created
+deployment.apps/revisor created
+gateway.gateway.networking.k8s.io/revisor created
+httproute.gateway.networking.k8s.io/revisor created
+networkpolicy.networking.k8s.io/acceso-revisor-salida created
+networkpolicy.networking.k8s.io/cerrado created
+networkpolicy.networking.k8s.io/dns created
+networkpolicy.networking.k8s.io/prueba-entrada created
+networkpolicy.networking.k8s.io/revisor-entrada created
+networkpolicy.networking.k8s.io/revisor-salida created
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 1 of 3 updated replicas are available...
+Waiting for deployment "revisor" rollout to finish: 2 of 3 updated replicas are available...
+deployment "revisor" successfully rolled out
+
+$ kubectl rollout status deployment/prueba -n revisor --timeout=180s
+deployment "prueba" successfully rolled out
+
+$ kubectl wait --for=condition=Programmed gateway/revisor -n revisor --timeout=240s
+gateway.gateway.networking.k8s.io/revisor condition met
+
+$ kubectl get namespace revisor -o go-template='{{range $k, $v := .metadata.labels}}{{$k}}={{$v}}{{"\n"}}{{end}}'
+kubernetes.io/metadata.name=revisor
+pod-security.kubernetes.io/audit=restricted
+pod-security.kubernetes.io/audit-version=v1.37
+pod-security.kubernetes.io/enforce=restricted
+pod-security.kubernetes.io/enforce-version=v1.37
+pod-security.kubernetes.io/warn=restricted
+pod-security.kubernetes.io/warn-version=v1.37
+
+$ kubectl get all -n revisor
+NAME                           READY   STATUS    RESTARTS   AGE
+pod/prueba-6899c74865-rgh68    1/1     Running   0          2m52s
+pod/revisor-5d6fd4d6bd-6kb4k   1/1     Running   0          2m52s
+pod/revisor-5d6fd4d6bd-jdmx8   1/1     Running   0          2m52s
+pod/revisor-5d6fd4d6bd-pj8r9   1/1     Running   0          2m52s
+
+NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/prueba    ClusterIP   10.96.130.233   <none>        9000/TCP   2m52s
+service/revisor   ClusterIP   10.96.146.219   <none>        80/TCP     2m52s
+
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           2m52s
+deployment.apps/revisor   3/3     3            3           2m52s
+
+NAME                                 DESIRED   CURRENT   READY   AGE
+replicaset.apps/prueba-6899c74865    1         1         1       2m52s
+replicaset.apps/revisor-5d6fd4d6bd   3         3         3       2m52s
+
+$ kubectl get all -n default
+NAME                 TYPE        CLUSTER-IP   EXTERNAL-IP   PORT(S)   AGE
+service/kubernetes   ClusterIP   10.96.0.1    <none>        443/TCP   14m
+
+$ kubectl get gateway,httproute -n revisor
+NAME                                        CLASS   ADDRESS          PROGRAMMED   AGE
+gateway.gateway.networking.k8s.io/revisor   eg      172.27.255.200   True         2m52s
+
+NAME                                          HOSTNAMES   AGE
+httproute.gateway.networking.k8s.io/revisor               2m52s
+
+$ kubectl wait --for=condition=Available deployment -n envoy-gateway-system -l gateway.envoyproxy.io/owning-gateway-name=revisor --timeout=180s
+deployment.apps/envoy-revisor-revisor-b269644b condition met
+
+$ kubectl get pods,services -n envoy-gateway-system
+NAME                                                  READY   STATUS    RESTARTS   AGE
+pod/envoy-gateway-5fc4949dcb-k6s46                    1/1     Running   0          14m
+pod/envoy-revisor-revisor-b269644b-867f46cd7d-rbkcf   2/2     Running   0          2m52s
+
+NAME                                     TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                                            AGE
+service/envoy-gateway                    ClusterIP      10.96.130.219   <none>           18000/TCP,18001/TCP,18002/TCP,19001/TCP,9443/TCP   14m
+service/envoy-revisor-revisor-b269644b   LoadBalancer   10.96.221.218   172.27.255.200   80:31159/TCP                                       2m52s
+
+$ curl -s -m 5 http://172.27.255.200/salud   # desde fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+
+(las seis reglas de red se retiran para estudiar cada capa por separado; vuelven en 7.5)
+
+$ kubectl delete -n revisor -f red.yaml
+networkpolicy.networking.k8s.io "cerrado" deleted from revisor namespace
+networkpolicy.networking.k8s.io "dns" deleted from revisor namespace
+networkpolicy.networking.k8s.io "revisor-salida" deleted from revisor namespace
+networkpolicy.networking.k8s.io "prueba-entrada" deleted from revisor namespace
+networkpolicy.networking.k8s.io "revisor-entrada" deleted from revisor namespace
+networkpolicy.networking.k8s.io "acceso-revisor-salida" deleted from revisor namespace
+
+## 7.3 Pod Security Admission
+
+## 7.3.2 Los tres niveles, en dos espacios de prueba
+
+$ kubectl create namespace nivel-privileged
+namespace/nivel-privileged created
+
+$ kubectl create namespace nivel-baseline
+namespace/nivel-baseline created
+
+$ kubectl label namespace nivel-privileged pod-security.kubernetes.io/enforce=privileged
+namespace/nivel-privileged labeled
+
+$ kubectl label namespace nivel-baseline pod-security.kubernetes.io/enforce=baseline
+namespace/nivel-baseline labeled
+
+$ kubectl wait --for=create serviceaccount/default -n nivel-privileged --timeout=60s
+serviceaccount/default condition met
+
+$ kubectl wait --for=create serviceaccount/default -n nivel-baseline --timeout=60s
+serviceaccount/default condition met
+
+--- espacio nivel-privileged ---
+
+$ kubectl run hostnet -n nivel-privileged --image=curlimages/curl:8.22.0 --restart=Never --dry-run=server --overrides='{"spec":{"hostNetwork":true}}' -- sleep 5 2>&1 | cut -c1-260
+pod/hostnet created (server dry run)
+
+$ kubectl run sinreglas -n nivel-privileged --image=curlimages/curl:8.22.0 --restart=Never --dry-run=server -- sleep 5 2>&1 | cut -c1-260
+pod/sinreglas created (server dry run)
+
+--- espacio nivel-baseline ---
+
+$ kubectl run hostnet -n nivel-baseline --image=curlimages/curl:8.22.0 --restart=Never --dry-run=server --overrides='{"spec":{"hostNetwork":true}}' -- sleep 5 2>&1 | cut -c1-260
+Error from server (Forbidden): pods "hostnet" is forbidden: violates PodSecurity "baseline:latest": host namespaces (hostNetwork=true)
+[código de salida: 1]
+
+$ kubectl run sinreglas -n nivel-baseline --image=curlimages/curl:8.22.0 --restart=Never --dry-run=server -- sleep 5 2>&1 | cut -c1-260
+pod/sinreglas created (server dry run)
+
+--- espacio revisor ---
+
+$ kubectl run hostnet -n revisor --image=curlimages/curl:8.22.0 --restart=Never --dry-run=server --overrides='{"spec":{"hostNetwork":true}}' -- sleep 5 2>&1 | cut -c1-260
+Error from server (Forbidden): pods "hostnet" is forbidden: violates PodSecurity "restricted:v1.37": host namespaces (hostNetwork=true), allowPrivilegeEscalation != false (container "hostnet" must set securityContext.allowPrivilegeEscalation=false), unrestrict
+[código de salida: 1]
+
+$ kubectl run sinreglas -n revisor --image=curlimages/curl:8.22.0 --restart=Never --dry-run=server -- sleep 5 2>&1 | cut -c1-260
+Error from server (Forbidden): pods "sinreglas" is forbidden: violates PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "sinreglas" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "sinr
+[código de salida: 1]
+
+$ kubectl delete namespace nivel-privileged nivel-baseline
+namespace "nivel-privileged" deleted
+namespace "nivel-baseline" deleted
+
+## 7.3.4 (a) Poner enforce en un espacio que ya tiene Pods
+
+$ kubectl create namespace nivel-previo
+namespace/nivel-previo created
+
+$ kubectl wait --for=create serviceaccount/default -n nivel-previo --timeout=60s
+serviceaccount/default condition met
+
+$ kubectl run viejo -n nivel-previo --image=curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 --restart=Never -- sleep 3600
+pod/viejo created
+
+$ kubectl wait --for=condition=Ready pod/viejo -n nivel-previo --timeout=300s
+pod/viejo condition met
+
+$ kubectl label namespace nivel-previo pod-security.kubernetes.io/enforce=restricted
+Warning: existing pods in namespace "nivel-previo" violate the new PodSecurity enforce level "restricted:latest"
+Warning: viejo: allowPrivilegeEscalation != false, unrestricted capabilities, runAsNonRoot != true, seccompProfile
+namespace/nivel-previo labeled
+
+$ kubectl get pod viejo -n nivel-previo
+NAME    READY   STATUS    RESTARTS   AGE
+viejo   1/1     Running   0          21s
+
+$ kubectl run nuevo -n nivel-previo --image=curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777 --restart=Never -- sleep 3600 2>&1 | cut -c1-200
+Error from server (Forbidden): pods "nuevo" is forbidden: violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false (container "nuevo" must set securityContext.allowPrivilegeEscalati
+[código de salida: 1]
+
+$ kubectl delete namespace nivel-previo
+namespace "nivel-previo" deleted
+
+## 7.3.3 y 7.3.4 (b) El espacio revisor, en restricted
+
+$ kubectl run sinreglas -n revisor --image=curlimages/curl:8.22.0 --restart=Never -- sleep 60
+Error from server (Forbidden): pods "sinreglas" is forbidden: violates PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "sinreglas" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "sinreglas" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "sinreglas" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "sinreglas" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+[código de salida: 1]
+
+$ kubectl get pods -n revisor -l run=sinreglas
+No resources found in revisor namespace.
+
+$ kubectl label --dry-run=server --overwrite namespace kube-system pod-security.kubernetes.io/enforce=restricted
+Warning: existing pods in namespace "kube-system" violate the new PodSecurity enforce level "restricted:latest"
+Warning: coredns-559f6c778d-q8k29 (and 1 other pod): runAsNonRoot != true, seccompProfile
+Warning: etcd-curso-k8s-l7-control-plane (and 3 other pods): host namespaces, hostPort, probe or lifecycle host, allowPrivilegeEscalation != false, unrestricted capabilities, restricted volume types, runAsNonRoot != true
+Warning: kindnet-82j5f (and 2 other pods): host namespaces, allowPrivilegeEscalation != false, unrestricted capabilities, restricted volume types, runAsNonRoot != true, seccompProfile
+Warning: kube-proxy-d6hbh (and 2 other pods): host namespaces, privileged, allowPrivilegeEscalation != false, unrestricted capabilities, restricted volume types, runAsNonRoot != true, seccompProfile
+namespace/kube-system labeled (server dry run)
+
+$ kubectl label --dry-run=server --overwrite namespace revisor pod-security.kubernetes.io/enforce=restricted
+namespace/revisor not labeled (server dry run)
+
+$ kubectl patch deployment revisor -n revisor --type=json -p '[{"op":"remove","path":"/spec/template/spec/securityContext/seccompProfile"}]' --dry-run=server
+Warning: would violate PodSecurity "restricted:v1.37": seccompProfile (pod or container "revisor" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+deployment.apps/revisor patched
+
+$ kubectl get deployment revisor -n revisor -o jsonpath='{.spec.template.spec.securityContext.seccompProfile.type}{"\n"}'
+RuntimeDefault
+
+## El error 1: un Deployment sin Pods
+
+$ kubectl apply -n revisor -f fig07_01.sin-reglas.yaml
+Warning: would violate PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "revisor" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "revisor" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "revisor" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "revisor" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+deployment.apps/sinreglas created
+
+$ kubectl wait --for=condition=ReplicaFailure deployment/sinreglas -n revisor --timeout=120s
+deployment.apps/sinreglas condition met
+
+$ kubectl get deployment sinreglas -n revisor
+NAME        READY   UP-TO-DATE   AVAILABLE   AGE
+sinreglas   0/1     0            0           1s
+
+$ kubectl get replicaset -n revisor -l app=sinreglas
+NAME                   DESIRED   CURRENT   READY   AGE
+sinreglas-7c585c788d   1         0         0       1s
+
+$ kubectl get pods -n revisor -l app=sinreglas
+No resources found in revisor namespace.
+
+$ kubectl describe replicaset -n revisor -l app=sinreglas | sed -n '/^Events:/,$p' | head -4
+Events:
+  Type     Reason        Age   From                   Message
+  ----     ------        ----  ----                   -------
+  Warning  FailedCreate  2s    replicaset-controller  Error creating: pods "sinreglas-7c585c788d-47khh" is forbidden: violates PodSecurity "restricted:v1.37": allowPrivilegeEscalation != false (container "revisor" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "revisor" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "revisor" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "revisor" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
+
+$ kubectl delete -n revisor -f fig07_01.sin-reglas.yaml
+deployment.apps "sinreglas" deleted from revisor namespace
+
+## 7.4 Cuentas de servicio y permisos mínimos
+
+$ kubectl get serviceaccounts -n revisor
+NAME         AGE
+default      5m2s
+observador   5m2s
+prueba       5m2s
+revisor      5m2s
+
+$ kubectl get pods -n revisor -o custom-columns='POD:.metadata.name,CUENTA:.spec.serviceAccountName,AUTOMOUNT:.spec.automountServiceAccountToken,VOLUMENES:.spec.volumes[*].name'
+POD                        CUENTA    AUTOMOUNT   VOLUMENES
+prueba-6899c74865-rgh68    prueba    false       <none>
+revisor-5d6fd4d6bd-6kb4k   revisor   false       datos,token
+revisor-5d6fd4d6bd-jdmx8   revisor   false       datos,token
+revisor-5d6fd4d6bd-pj8r9   revisor   false       datos,token
+
+$ kubectl get role,rolebinding -n revisor -o wide
+NAME                                        CREATED AT
+role.rbac.authorization.k8s.io/observador   2026-10-21T22:52:57Z
+
+NAME                                               ROLE              AGE    USERS   GROUPS   SERVICEACCOUNTS
+rolebinding.rbac.authorization.k8s.io/observador   Role/observador   5m3s                    revisor/observador
+
+$ kubectl describe role observador -n revisor
+Name:         observador
+Labels:       <none>
+Annotations:  <none>
+PolicyRule:
+  Resources         Non-Resource URLs  Resource Names  Verbs
+  ---------         -----------------  --------------  -----
+  events            []                 []              [get list watch]
+  pods/log          []                 []              [get list watch]
+  pods              []                 []              [get list watch]
+  services          []                 []              [get list watch]
+  deployments.apps  []                 []              [get list watch]
+  replicasets.apps  []                 []              [get list watch]
+
+$ kubectl auth can-i --list -n revisor --as=system:serviceaccount:revisor:revisor | head -5
+Resources                                       Non-Resource URLs                      Resource Names   Verbs
+selfsubjectreviews.authentication.k8s.io        []                                     []               [create]
+selfsubjectaccessreviews.authorization.k8s.io   []                                     []               [create]
+selfsubjectrulesreviews.authorization.k8s.io    []                                     []               [create]
+clustertrustbundles.certificates.k8s.io         []                                     []               [get list watch]
+
+$ kubectl auth can-i get pods -n revisor --as=system:serviceaccount:revisor:revisor
+no
+[código de salida: 1]
+
+$ kubectl auth can-i get pods -n revisor --as=system:serviceaccount:revisor:observador
+yes
+
+$ kubectl auth can-i get pods --subresource=log -n revisor --as=system:serviceaccount:revisor:observador
+yes
+
+$ kubectl auth can-i delete pods -n revisor --as=system:serviceaccount:revisor:observador
+no
+[código de salida: 1]
+
+$ kubectl auth can-i get secrets -n revisor --as=system:serviceaccount:revisor:observador
+no
+[código de salida: 1]
+
+$ kubectl auth can-i get pods -n default --as=system:serviceaccount:revisor:observador
+no
+[código de salida: 1]
+
+$ kubectl get deployments -n revisor --as=system:serviceaccount:revisor:observador
+NAME      READY   UP-TO-DATE   AVAILABLE   AGE
+prueba    1/1     1            1           5m5s
+revisor   3/3     3            3           5m5s
+
+$ kubectl delete pod -n revisor -l app=prueba --as=system:serviceaccount:revisor:observador
+Error from server (Forbidden): pods "prueba-6899c74865-rgh68" is forbidden: User "system:serviceaccount:revisor:observador" cannot delete resource "pods" in API group "" in the namespace "revisor"
+[código de salida: 1]
+
+$ kubectl get secrets -n revisor --as=system:serviceaccount:revisor:observador
+Error from server (Forbidden): secrets is forbidden: User "system:serviceaccount:revisor:observador" cannot list resource "secrets" in API group "" in the namespace "revisor"
+[código de salida: 1]
+
+## 7.4.4 Lo mismo, desde dentro de un Pod
+
+$ kubectl apply -n revisor -f depurar.yaml -f intruso.yaml -f fig07_04.lector.yaml
+pod/depurar created
+pod/intruso created
+pod/lector created
+
+$ kubectl wait -n revisor --for=condition=Ready pod/depurar pod/intruso pod/lector --timeout=180s
+pod/depurar condition met
+pod/intruso condition met
+pod/lector condition met
+
+$ kubectl exec -n revisor lector -- /bin/ls /var/run/secrets/kubernetes.io/serviceaccount
+ca.crt
+namespace
+token
+
+$ kubectl exec -n revisor lector -- sh -c 'curl -s -o /dev/null -w "pods %{http_code}\n" --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" https://kubernetes.default.svc/api/v1/namespaces/revisor/pods'
+pods 200
+
+$ kubectl exec -n revisor lector -- sh -c 'curl -s -o /dev/null -w "secrets %{http_code}\n" --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" https://kubernetes.default.svc/api/v1/namespaces/revisor/secrets'
+secrets 403
+
+$ kubectl exec -n revisor lector -- sh -c 'curl -s -o /dev/null -w "pods-default %{http_code}\n" --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" https://kubernetes.default.svc/api/v1/namespaces/default/pods'
+pods-default 403
+
+$ kubectl exec -n revisor lector -- sh -c 'curl -s --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" https://kubernetes.default.svc/api/v1/namespaces/revisor/secrets | grep -E "message|code"'
+  "message": "secrets is forbidden: User \"system:serviceaccount:revisor:observador\" cannot list resource \"secrets\" in API group \"\" in the namespace \"revisor\"",
+  "code": 403
+
+$ kubectl exec -n revisor intruso -- sh -c '/bin/ls /var/run/secrets/kubernetes.io; echo código=$?' 2>&1
+ls: /var/run/secrets/kubernetes.io: No such file or directory
+código=1
+
+$ kubectl exec -n revisor intruso -- sh -c 'curl -s -k https://kubernetes.default.svc/api/v1/namespaces/revisor/pods | grep -E "message|code"'
+  "message": "pods is forbidden: User \"system:anonymous\" cannot list resource \"pods\" in API group \"\" in the namespace \"revisor\"",
+  "code": 403
+
+## 7.5.2 ¿Quién aplica las NetworkPolicy?
+
+$ kubectl get daemonset -n kube-system
+NAME         DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+kindnet      3         3         3       3            3           kubernetes.io/os=linux   17m
+kube-proxy   3         3         3       3            3           kubernetes.io/os=linux   17m
+
+$ kubectl get daemonset kindnet -n kube-system -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+docker.io/kindest/kindnetd:v20260820-69b56db7
+
+$ kubectl apply -n default -f intruso.yaml
+pod/intruso created
+
+$ kubectl wait -n default --for=condition=Ready pod/intruso --timeout=180s
+pod/intruso condition met
+
+$ kubectl get pods -A -l 'app in (depurar,intruso,lector)' -L acceso-revisor
+NAMESPACE   NAME      READY   STATUS    RESTARTS   AGE   ACCESO-REVISOR
+default     intruso   1/1     Running   0          1s    
+revisor     depurar   1/1     Running   0          14s   permitido
+revisor     intruso   1/1     Running   0          14s   
+revisor     lector    1/1     Running   0          13s   
+
+## 7.5.3 Sin reglas
+
+$ kubectl get networkpolicy -n revisor
+No resources found in revisor namespace.
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 http://prueba:9000/
+sano
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 -k -w '\n' https://kubernetes.default.svc/livez
+ok
+
+$ kubectl exec -n default intruso -- curl -s -m 3 http://revisor.revisor.svc.cluster.local/salud
+{"estado":"vivo","version":"1.6.0"}
+
+## 7.5.4 Todo cerrado
+
+$ kubectl apply -n revisor -f fig07_02.cerrado.yaml
+networkpolicy.networking.k8s.io/cerrado created
+
+$ sleep 8
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 http://revisor/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://revisor/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor intruso -- timeout 8 nslookup revisor.revisor.svc.cluster.local
+;; connection timed out; no servers could be reached
+
+command terminated with exit code 1
+[código de salida: 1]
+
+$ kubectl exec -n default intruso -- curl -s -m 3 http://revisor.revisor.svc.cluster.local/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+000
+[código de salida: 28]
+
+$ kubectl port-forward -n revisor --address 127.0.0.1 service/revisor 18087:80 &
+
+$ sleep 3
+Forwarding from 127.0.0.1:18087 -> 8080
+
+$ curl -s -m 8 -H 'Authorization: Bearer …' 'http://127.0.0.1:18087/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA     1.998s  se acabo el tiempo de espera
+
+$ kubectl exec -n revisor lector -- sh -c 'curl -s -m 3 -o /dev/null -w "pods %{http_code}\n" --cacert /var/run/secrets/kubernetes.io/serviceaccount/ca.crt -H "Authorization: Bearer $(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" https://kubernetes.default.svc/api/v1/namespaces/revisor/pods'
+pods 000
+command terminated with exit code 28
+[código de salida: 28]
+
+## 7.5.5 Las aperturas necesarias
+
+$ kubectl apply -n revisor -f red.yaml
+networkpolicy.networking.k8s.io/cerrado unchanged
+networkpolicy.networking.k8s.io/dns created
+networkpolicy.networking.k8s.io/revisor-salida created
+networkpolicy.networking.k8s.io/prueba-entrada created
+networkpolicy.networking.k8s.io/revisor-entrada created
+networkpolicy.networking.k8s.io/acceso-revisor-salida created
+
+$ sleep 8
+
+$ kubectl get networkpolicy -n revisor
+NAME                    POD-SELECTOR               AGE
+acceso-revisor-salida   acceso-revisor=permitido   8s
+cerrado                 <none>                     50s
+dns                     <none>                     8s
+prueba-entrada          app=prueba                 8s
+revisor-entrada         app=revisor                8s
+revisor-salida          app=revisor                8s
+
+$ kubectl describe networkpolicy revisor-entrada -n revisor | sed -n '/^Spec:/,$p'
+Spec:
+  PodSelector:     app=revisor
+  Allowing ingress traffic:
+    To Port: 8080/TCP
+    From:
+      PodSelector: acceso-revisor=permitido
+    From:
+      NamespaceSelector: kubernetes.io/metadata.name=envoy-gateway-system
+  Not affecting egress traffic
+  Policy Types: Ingress
+
+$ kubectl describe networkpolicy cerrado -n revisor | sed -n '/^Spec:/,$p'
+Spec:
+  PodSelector:     <none> (Allowing the specific traffic to all pods in this namespace)
+  Allowing ingress traffic:
+    <none> (Selected pods are isolated for ingress connectivity)
+  Allowing egress traffic:
+    <none> (Selected pods are isolated for egress connectivity)
+  Policy Types: Ingress, Egress
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           9ms  200
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 http://revisor/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://prueba:9000/
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 -k -w '\n' https://kubernetes.default.svc/livez
+
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor intruso -- nslookup revisor.revisor.svc.cluster.local
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+Name:	revisor.revisor.svc.cluster.local
+Address: 10.96.146.219
+
+
+
+$ kubectl exec -n default intruso -- curl -s -m 3 http://revisor.revisor.svc.cluster.local/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ curl -s -m 5 http://172.27.255.200/salud   # desde fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ kubectl port-forward -n revisor --address 127.0.0.1 service/revisor 18087:80 &
+
+$ sleep 3
+
+$ curl -s -m 5 http://127.0.0.1:18087/salud   # por port-forward
+{"estado":"vivo","version":"1.6.0"}
+
+
+(se espera a que pasen varias vueltas de las sondas con la red cerrada)
+
+$ sleep 45
+
+$ kubectl get pods -n revisor -l 'app in (revisor,prueba)'
+NAME                       READY   STATUS    RESTARTS   AGE
+prueba-6899c74865-rgh68    1/1     Running   0          7m15s
+revisor-5d6fd4d6bd-6kb4k   1/1     Running   0          7m15s
+revisor-5d6fd4d6bd-jdmx8   1/1     Running   0          7m15s
+revisor-5d6fd4d6bd-pj8r9   1/1     Running   0          7m15s
+
+## 7.5.6 Para qué sirve cada regla: se quita una, se mide, se devuelve
+
+### Sin la regla «dns»
+
+$ kubectl delete networkpolicy dns -n revisor
+networkpolicy.networking.k8s.io "dns" deleted from revisor namespace
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/salud
+000
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- sh -c 'r=$(timeout 8 nslookup revisor.revisor.svc.cluster.local 2>&1 | grep -E "^Address: [0-9]|timed out" | tail -1); echo "${r:-sin respuesta}"'
+;; connection timed out; no servers could be reached
+
+$ curl -s -m 4 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+200
+
+$ kubectl apply -n revisor -f red.yaml | grep -v unchanged
+networkpolicy.networking.k8s.io/dns created
+
+$ sleep 8
+
+### Sin la regla «revisor-salida»
+
+$ kubectl delete networkpolicy revisor-salida -n revisor
+networkpolicy.networking.k8s.io "revisor-salida" deleted from revisor namespace
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/salud
+200
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA     2.001s  se acabo el tiempo de espera
+
+$ kubectl exec -n revisor depurar -- sh -c 'r=$(timeout 8 nslookup revisor.revisor.svc.cluster.local 2>&1 | grep -E "^Address: [0-9]|timed out" | tail -1); echo "${r:-sin respuesta}"'
+Address: 10.96.146.219
+
+$ curl -s -m 4 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+200
+
+(para descartar que el revisor siga usando una conexión que ya tenía abierta con prueba, se reinicia y se vuelve a preguntar)
+
+$ kubectl rollout restart deployment/revisor -n revisor
+deployment.apps/revisor restarted
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s
+Waiting for deployment "revisor" rollout to finish: 0 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "revisor" rollout to finish: 1 old replicas are pending termination...
+deployment "revisor" successfully rolled out
+
+$ sleep 3
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA     2.002s  se acabo el tiempo de espera
+
+$ kubectl apply -n revisor -f red.yaml | grep -v unchanged
+networkpolicy.networking.k8s.io/revisor-salida created
+
+$ sleep 8
+
+### Sin la regla «prueba-entrada»
+
+$ kubectl delete networkpolicy prueba-entrada -n revisor
+networkpolicy.networking.k8s.io "prueba-entrada" deleted from revisor namespace
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/salud
+200
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    FALLA     2.209s  se acabo el tiempo de espera
+
+$ kubectl exec -n revisor depurar -- sh -c 'r=$(timeout 8 nslookup revisor.revisor.svc.cluster.local 2>&1 | grep -E "^Address: [0-9]|timed out" | tail -1); echo "${r:-sin respuesta}"'
+Address: 10.96.146.219
+
+$ curl -s -m 4 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+200
+
+$ kubectl apply -n revisor -f red.yaml | grep -v unchanged
+networkpolicy.networking.k8s.io/prueba-entrada created
+
+$ sleep 8
+
+### Sin la regla «revisor-entrada»
+
+$ kubectl delete networkpolicy revisor-entrada -n revisor
+networkpolicy.networking.k8s.io "revisor-entrada" deleted from revisor namespace
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/salud
+000
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- sh -c 'r=$(timeout 8 nslookup revisor.revisor.svc.cluster.local 2>&1 | grep -E "^Address: [0-9]|timed out" | tail -1); echo "${r:-sin respuesta}"'
+Address: 10.96.146.219
+
+$ curl -s -m 4 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+000
+[código de salida: 28]
+
+$ kubectl apply -n revisor -f red.yaml | grep -v unchanged
+networkpolicy.networking.k8s.io/revisor-entrada created
+
+$ sleep 8
+
+### Sin la regla «acceso-revisor-salida»
+
+$ kubectl delete networkpolicy acceso-revisor-salida -n revisor
+networkpolicy.networking.k8s.io "acceso-revisor-salida" deleted from revisor namespace
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/salud
+000
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- sh -c 'r=$(timeout 8 nslookup revisor.revisor.svc.cluster.local 2>&1 | grep -E "^Address: [0-9]|timed out" | tail -1); echo "${r:-sin respuesta}"'
+Address: 10.96.146.219
+
+$ curl -s -m 4 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+200
+
+$ kubectl apply -n revisor -f red.yaml | grep -v unchanged
+networkpolicy.networking.k8s.io/acceso-revisor-salida created
+
+$ sleep 8
+
+### Con las seis
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 -o /dev/null -w '%{http_code}\n' http://revisor/salud
+200
+
+$ kubectl exec -n revisor depurar -- curl -s -m 4 -H 'Authorization: Bearer …' 'http://revisor/api/estados?formato=tabla'
+SERVICIO  ESTADO    TIEMPO  DETALLE
+prueba    OK           4ms  200
+
+$ kubectl exec -n revisor depurar -- sh -c 'r=$(timeout 8 nslookup revisor.revisor.svc.cluster.local 2>&1 | grep -E "^Address: [0-9]|timed out" | tail -1); echo "${r:-sin respuesta}"'
+Address: 10.96.146.219
+
+$ curl -s -m 4 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/salud   # desde fuera del clúster
+200
+
+## 7.5.7 Las políticas no se aplican al instante
+
+$ for ciclo in 1 2 3 4 5 6; do   # borrar las seis, esperar 1 s, volver a aplicarlas y preguntar seis veces a la API desde el intruso
+ciclo 1: +0s:200 +0s:200 +0s:200 +2s:000 +3s:000 +6s:000
+ciclo 2: +2s:000 +3s:000 +5s:000 +6s:000 +7s:000 +9s:000
+ciclo 3: +0s:200 +1s:200 +1s:200 +2s:000 +7s:000 +10s:000
+ciclo 4: +5s:000 +6s:000 +9s:000 +12s:000 +17s:000 +20s:000
+ciclo 5: +6s:000 +9s:000 +12s:000 +15s:000 +19s:000 +23s:000
+ciclo 6: +3s:000 +6s:000 +9s:000 +12s:000 +13s:000 +15s:000
+
+$ sleep 8
+
+$ kubectl exec -n revisor intruso -- curl -s -m 3 -k -o /dev/null -w '%{http_code}\n' https://kubernetes.default.svc/livez
+000
+command terminated with exit code 28
+[código de salida: 28]
+
+## El error 2: la entrada abierta que no entra
+
+$ kubectl delete networkpolicy acceso-revisor-salida -n revisor
+networkpolicy.networking.k8s.io "acceso-revisor-salida" deleted from revisor namespace
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://revisor/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl get networkpolicy -n revisor
+NAME              POD-SELECTOR   AGE
+cerrado           <none>         41s
+dns               <none>         41s
+prueba-entrada    app=prueba     41s
+revisor-entrada   app=revisor    41s
+revisor-salida    app=revisor    41s
+
+$ kubectl get pod depurar -n revisor --show-labels
+NAME      READY   STATUS    RESTARTS   AGE     LABELS
+depurar   1/1     Running   0          7m38s   acceso-revisor=permitido,app=depurar
+
+$ kubectl apply -k . | grep networkpolicy
+networkpolicy.networking.k8s.io/acceso-revisor-salida created
+networkpolicy.networking.k8s.io/cerrado unchanged
+networkpolicy.networking.k8s.io/dns unchanged
+networkpolicy.networking.k8s.io/prueba-entrada unchanged
+networkpolicy.networking.k8s.io/revisor-entrada unchanged
+networkpolicy.networking.k8s.io/revisor-salida unchanged
+
+$ sleep 8
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://revisor/salud
+{"estado":"vivo","version":"1.6.0"}
+
+## Hábito de seguridad: el inventario
+
+$ kubectl get services -A | grep -E 'NAMESPACE|LoadBalancer'
+NAMESPACE              NAME                             TYPE           CLUSTER-IP      EXTERNAL-IP      PORT(S)                                            AGE
+envoy-gateway-system   envoy-revisor-revisor-b269644b   LoadBalancer   10.96.221.218   172.27.255.200   80:31159/TCP                                       13m
+
+$ kubectl apply -k . 2>&1 | grep -c -i warning || true
+0
+
+$ kubectl get pods -n revisor -o custom-columns='POD:.metadata.name,CUENTA:.spec.serviceAccountName,AUTOMOUNT:.spec.automountServiceAccountToken'
+POD                       CUENTA       AUTOMOUNT
+depurar                   default      false
+intruso                   default      false
+lector                    observador   true
+prueba-6899c74865-rgh68   prueba       false
+revisor-d86b5794d-5fspg   revisor      false
+revisor-d86b5794d-hx92n   revisor      false
+revisor-d86b5794d-tmq5g   revisor      false
+
+## Ejercicio 1: la etiqueta correcta en el espacio equivocado
+
+$ kubectl apply -n default -f depurar.yaml
+pod/depurar created
+
+$ kubectl wait -n default --for=condition=Ready pod/depurar --timeout=180s
+pod/depurar condition met
+
+$ kubectl get pod depurar -n default --show-labels
+NAME      READY   STATUS    RESTARTS   AGE   LABELS
+depurar   1/1     Running   0          6s    acceso-revisor=permitido,app=depurar
+
+$ kubectl exec -n default depurar -- curl -s -m 3 http://revisor.revisor.svc.cluster.local/salud
+command terminated with exit code 28
+[código de salida: 28]
+
+$ kubectl exec -n revisor depurar -- curl -s -m 3 http://revisor.revisor.svc.cluster.local/salud
+{"estado":"vivo","version":"1.6.0"}
+
+$ kubectl delete pod depurar -n default --wait=false
+pod "depurar" deleted from default namespace
+
+## Ejercicio 2: una cuenta que solo reinicia el revisor
+
+$ kubectl apply -n revisor -f fig07_03.reiniciador.yaml
+serviceaccount/reiniciador created
+role.rbac.authorization.k8s.io/reiniciador created
+rolebinding.rbac.authorization.k8s.io/reiniciador created
+
+$ kubectl auth can-i patch deployment/revisor -n revisor --as=system:serviceaccount:revisor:reiniciador
+yes
+
+$ kubectl auth can-i patch deployment/prueba -n revisor --as=system:serviceaccount:revisor:reiniciador
+no
+[código de salida: 1]
+
+$ kubectl auth can-i list deployments -n revisor --as=system:serviceaccount:revisor:reiniciador
+no
+[código de salida: 1]
+
+$ kubectl rollout restart deployment/revisor -n revisor --as=system:serviceaccount:revisor:reiniciador
+deployment.apps/revisor restarted
+
+$ kubectl rollout restart deployment/prueba -n revisor --as=system:serviceaccount:revisor:reiniciador
+Error from server (Forbidden): deployments.apps "prueba" is forbidden: User "system:serviceaccount:revisor:reiniciador" cannot get resource "deployments" in API group "apps" in the namespace "revisor"
+[código de salida: 1]
+
+$ kubectl rollout status deployment/revisor -n revisor --timeout=180s | tail -1
+deployment "revisor" successfully rolled out
+
+$ kubectl delete -n revisor -f fig07_03.reiniciador.yaml
+serviceaccount "reiniciador" deleted from revisor namespace
+role.rbac.authorization.k8s.io "reiniciador" deleted from revisor namespace
+rolebinding.rbac.authorization.k8s.io "reiniciador" deleted from revisor namespace
+
+## Ejercicio 3: una ruta que viene de otro espacio
+
+$ kubectl get gateway revisor -n revisor -o jsonpath='{.spec.listeners[0].allowedRoutes}{"\n"}'
+{"namespaces":{"from":"Same"}}
+
+$ kubectl apply -n default -f fig07_05.ruta-ajena.yaml
+httproute.gateway.networking.k8s.io/ajena created
+
+$ sleep 5
+
+$ kubectl get httproute ajena -n default -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}'
+Accepted=False NotAllowedByListeners: No listeners included by this parent ref allowed this attachment.
+ResolvedRefs=False RefNotPermitted: Failed to process route rule 0 backendRef 0: Backend ref to Service revisor/revisor not permitted by any ReferenceGrant.
+
+$ kubectl label namespace default acceso-puerta=permitido
+namespace/default labeled
+
+$ kubectl patch gateway revisor -n revisor --type=json -p '[{"op":"add","path":"/spec/listeners/0/allowedRoutes","value":{"namespaces":{"from":"Selector","selector":{"matchLabels":{"acceso-puerta":"permitido"}}}}}]'
+gateway.gateway.networking.k8s.io/revisor patched
+
+$ sleep 5
+
+$ kubectl get httproute ajena -n default -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}'
+Accepted=True Accepted: Route is accepted
+ResolvedRefs=False RefNotPermitted: Failed to process route rule 0 backendRef 0: Backend ref to Service revisor/revisor not permitted by any ReferenceGrant.
+
+$ kubectl apply -n revisor -f fig07_06.referencegrant.yaml
+referencegrant.gateway.networking.k8s.io/rutas-de-default created
+
+$ sleep 5
+
+$ kubectl get httproute ajena -n default -o jsonpath='{range .status.parents[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}'
+Accepted=True Accepted: Route is accepted
+ResolvedRefs=True ResolvedRefs: Resolved all the Object references for the Route
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/ajena   # desde fuera del clúster
+404
+
+$ kubectl logs -n revisor -l app=revisor --tail=-1 | grep -E 'GET /ajena'
+revisor: GET /ajena 404 0s
+
+(se deshace todo lo del ejercicio)
+
+$ kubectl delete -n default httproute ajena
+httproute.gateway.networking.k8s.io "ajena" deleted from default namespace
+
+$ kubectl delete -n revisor referencegrant rutas-de-default
+referencegrant.gateway.networking.k8s.io "rutas-de-default" deleted from revisor namespace
+
+$ kubectl label namespace default acceso-puerta-
+namespace/default unlabeled
+
+$ kubectl patch gateway revisor -n revisor --type=json -p '[{"op":"remove","path":"/spec/listeners/0/allowedRoutes"}]'
+gateway.gateway.networking.k8s.io/revisor patched
+
+## Cómo sé que lo logré: el estado final
+
+$ kubectl delete -n revisor pod depurar intruso lector --wait=false
+pod "depurar" deleted from revisor namespace
+pod "intruso" deleted from revisor namespace
+pod "lector" deleted from revisor namespace
+
+$ kubectl delete -n default pod intruso --wait=false
+pod "intruso" deleted from default namespace
+
+$ kubectl diff -k . >/dev/null && echo 'sin diferencias con los archivos'
+sin diferencias con los archivos
+
+$ kubectl get deployments,services,gateway,httproute,networkpolicy -n revisor
+NAME                      READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/prueba    1/1     1            1           14m
+deployment.apps/revisor   3/3     3            3           14m
+
+NAME              TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)    AGE
+service/prueba    ClusterIP   10.96.130.233   <none>        9000/TCP   14m
+service/revisor   ClusterIP   10.96.146.219   <none>        80/TCP     14m
+
+NAME                                        CLASS   ADDRESS          PROGRAMMED   AGE
+gateway.gateway.networking.k8s.io/revisor   eg      172.27.255.200   True         14m
+
+NAME                                          HOSTNAMES   AGE
+httproute.gateway.networking.k8s.io/revisor               14m
+
+NAME                                                    POD-SELECTOR               AGE
+networkpolicy.networking.k8s.io/acceso-revisor-salida   acceso-revisor=permitido   66s
+networkpolicy.networking.k8s.io/cerrado                 <none>                     118s
+networkpolicy.networking.k8s.io/dns                     <none>                     118s
+networkpolicy.networking.k8s.io/prueba-entrada          app=prueba                 118s
+networkpolicy.networking.k8s.io/revisor-entrada         app=revisor                118s
+networkpolicy.networking.k8s.io/revisor-salida          app=revisor                118s
+
+$ curl -s -m 5 http://172.27.255.200/salud   # desde fuera del clúster
+{"estado":"vivo","version":"1.6.0"}
+
+
+$ curl -s -m 5 -o /dev/null -w '%{http_code}\n' http://172.27.255.200/api/estados   # desde fuera del clúster
+401
+
+$ kubectl label --dry-run=server --overwrite namespace revisor pod-security.kubernetes.io/enforce=restricted
+namespace/revisor not labeled (server dry run)
+
+## Borrar el clúster
+
+$ kind delete cluster --name curso-k8s-l7
+Deleting cluster "curso-k8s-l7" ...
+Deleted nodes: ["curso-k8s-l7-worker2" "curso-k8s-l7-worker" "curso-k8s-l7-control-plane"]
+(borrar tardó 1 s)
+
+$ kind get clusters | grep -c curso-k8s-l7
+0
+
+# disco de Docker: 77% usado
+# la corrida completa tardó 1569 s
